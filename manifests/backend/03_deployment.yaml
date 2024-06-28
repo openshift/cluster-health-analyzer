@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: cluster-health-analyzer
+  name: cluster-health-analyzer
+  namespace: cluster-health-analyzer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cluster-health-analyzer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cluster-health-analyzer
+    spec:
+      serviceAccountName: cluster-health-analyzer-thanos-querier
+      automountServiceAccountToken: true
+      containers:
+      - name: cluster-health-analyzer
+        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
+        imagePullPolicy: Always
+        command:
+          - "cluster-health-analyzer"
+          - "serve"
+        env:
+          - name: PROM_URL
+            value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
+        ports:
+        - containerPort: 8080
+          name: metrics
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
