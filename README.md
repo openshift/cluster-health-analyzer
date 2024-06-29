@@ -64,3 +64,35 @@ cluster:health:components
 
 See https://github.com/openshift/cluster-health-console-prototype of an example
 usage of the data for incidents navigation.
+
+## Testing
+
+### Data simulation
+
+For development purposes, it's useful to have some data filled in Prometheus.
+
+It's possible to generate sample alerts + corresponding components and incidents
+mappings via the following script:
+
+``` sh
+go run ./main.go simulate
+```
+
+This script generates `cluster-health-analyzer-openmetrics.txt` file. It can be
+then turned into tsdb files via `promtool`, that's available as part of prometheus
+installation:
+
+``` sh
+promtool tsdb create-blocks-from openmetrics cluster-health-analyzer-openmetrics.txt
+```
+
+Finally, one can copy the files to the cluster that's running the health analyzer:
+
+``` sh
+for d in data/*; do
+  echo $d
+  kubectl cp $d openshift-user-workload-monitoring/prometheus-user-workload-0:/prometheus -c prometheus
+done
+```
+
+Once finished, the data should appear in the target cluster.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/openshift/cluster-health-analyzer/cmd/simulate"
 	"github.com/openshift/cluster-health-analyzer/pkg/server"
 )
 
@@ -38,7 +39,8 @@ func Execute() {
 }
 
 func init() {
-	serveCmd.Flags().IntVarP(&interval, "interval", "i", 30, "Refresh interval in seconds")
+	serveCmd.Flags().IntVarP(&interval, "interval", "i", 30, "refresh interval in seconds")
 
+	rootCmd.AddCommand(simulate.SimulateCmd)
 	rootCmd.AddCommand(serveCmd)
 }
