@@ -34,7 +34,7 @@ spec:
         - '--openshift-sar={"resourceAPIGroup":"monitoring.coreos.com", "resource": "prometheuses/api", "resourceName": "k8s", "verb": "get"}'
         - '--scope=user:info user:check-access'
       - name: cluster-health-console
-        image: "quay.io/openshiftanalytics/cluster-health-console-prototype:latest"
+        image: "quay.io/openshiftanalytics/cluster-health-console-prototype:dev-preview"
         imagePullPolicy: Always
         env:
           - name: PROM_URL
