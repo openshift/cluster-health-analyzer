@@ -76,7 +76,7 @@ The anatomy:
 ```
 cluster:health:components{
     // The layer the component belongs to.
-    // Currently one of ["compute", "cluster", "workload"].
+    // Currently one of ["compute", "core", "workload"].
     layer="core",
 
     // The name of the component.
