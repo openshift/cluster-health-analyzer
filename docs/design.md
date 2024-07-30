@@ -75,8 +75,7 @@ The anatomy:
 
 ```
 cluster:health:components{
-    // The layer the component belongs to.
-    // Currently one of ["compute", "core", "workload"].
+    // The layer the component belongs to. See the section below.
     layer="core",
 
     // The name of the component.
@@ -84,6 +83,27 @@ cluster:health:components{
 
 } 50 // The ranking of the component. The more important, the lower value.
 ```
+
+### The `layer`` field
+
+The layer can be used for high-level categorization of the components.
+
+Currently we define the following layer values:
+
+- `compute` - related to health of the underlying nodes. Currently,
+only one component named `compute` is assigned there. In the future,
+each node (both control plane and worker) could be modeled as individual
+components. This however would need a reliable mechanism to extract 
+node name from the alerts metadata.
+
+- `core` - mostly components tied to the CVO operators. Those components are
+needed for overal health of the cluster.
+
+- `workload` - components tied to the workloads. This can mean alerts related
+to the workloads directly, but also layered components installed via OLM.
+They differ from the `core` operators as they are not needed for keeping
+of the cluster functional, but rather extend it to provide additional
+functionality.
 
 ## cluster:health:components:map
 
@@ -132,8 +152,8 @@ Being able to rely on a single number with a limited set of values makes it
 easier to represent the severity to the user.
 
 The meaning of the values is:
-- 0 - healthy, mapping to "info" severity.
-- 1 - warning, mapping to "warning" severity. The signal is related to the
+- `0` - healthy, mapping to "info" severity.
+- `1` - warning, mapping to "warning" severity. The signal is related to the
 health of the component, but not necessary requires immediate action. This is
 the default values for arbitrary severity values.
-- 2 - critical, mapping to "critical" severity.
+- `2` - critical, mapping to "critical" severity.
