@@ -14,18 +14,13 @@ import (
 
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 )
 
 func must(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-type relativeInterval struct {
-	labels map[string]string
-	start  int // relative start in minutes
-	end    int // relative end in minutes
 }
 
 var outputFile = "cluster-health-analyzer-openmetrics.txt"
@@ -42,219 +37,223 @@ func init() {
 	SimulateCmd.Flags().StringVarP(&outputFile, "output", "o", outputFile, "output file")
 }
 
-func relativeToAbsoluteIntervals(relIntervals []relativeInterval, end model.Time) []processor.Interval {
-	maxEnd := 0
-	for _, relInterval := range relIntervals {
-		if relInterval.end > maxEnd {
-			maxEnd = relInterval.end
-		}
-	}
-
-	absStart := end.Add(time.Duration((float64)(-maxEnd) * float64(time.Minute)))
-
-	ret := make([]processor.Interval, len(relIntervals))
-	for i, relInterval := range relIntervals {
-		labels := make(map[string]string)
-		for k, v := range relInterval.labels {
-			labels[k] = v
-		}
-		labels["alertstate"] = "firing"
-
-		ret[i] = processor.Interval{
-			Start:  absStart.Add(time.Duration(float64(relInterval.start) * float64(time.Minute))),
-			End:    absStart.Add(time.Duration(float64(relInterval.end) * float64(time.Minute))),
-			Metric: prom.LabelSet{Labels: labels},
-		}
-	}
-	return ret
-}
-
-var relIntervals = []relativeInterval{
+var relIntervals = []utils.RelativeInterval{
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "Watchdog",
 			"namespace": "openshift-monitoring",
 			"severity":  "none",
 		},
-		start: 0,
-		end:   4000,
+		Start: 0,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "AlertmanagerReceiversNotConfigured",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 		},
-		start: 0,
-		end:   4000,
+		Start: 0,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "ClusterNotUpgradeable",
 			"namespace": "openshift-cluster-version",
 			"severity":  "info",
 		},
-		start: 0,
-		end:   4000,
+		Start: 0,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "TargetDown",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 		},
-		start: 3000,
-		end:   4000,
+		Start: 3000,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "KubeNodeNotReady",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 			"node":      "ip-10-0-58-248.us-east-2.compute.internal",
 			"condition": "Ready",
 		},
-		start: 3010,
-		end:   4000,
+		Start: 3010,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "KubeNodeUnreachable",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 			"node":      "ip-10-0-58-248.us-east-2.compute.internal",
 		},
-		start: 3010,
-		end:   4000,
+		Start: 3010,
+		End:   4000,
 	},
 	// Simulate the ClusterOperatorDegraded alert to be flapping
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "ClusterOperatorDegraded",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "machine-config",
 		},
-		start: 3005,
-		end:   3050,
+		Start: 3005,
+		End:   3050,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "ClusterOperatorDegraded",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "machine-config",
 		},
-		start: 3100,
-		end:   3200,
+		Start: 3100,
+		End:   3200,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "ClusterOperatorDegraded",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "machine-config",
 		},
-		start: 3300,
-		end:   3600,
+		Start: 3300,
+		End:   3600,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "TargetDown",
 			"namespace": "openshift-machine-config-operator",
 			"severity":  "warning",
 		},
-		start: 3000,
-		end:   4000,
+		Start: 3000,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "ClusterOperatorDown",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "monitoring",
 		},
-		start: 3000,
-		end:   3200,
+		Start: 3000,
+		End:   3200,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "ClusterOperatorDown",
 			"namespace": "openshift-cluster-version",
 			"severity":  "critical",
 			"name":      "monitoring",
 		},
-		start: 3200,
-		end:   4000,
+		Start: 3200,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "KubeDaemonSetRolloutStuck",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 		},
-		start: 3000,
-		end:   4000,
+		Start: 3000,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "PodDisruptionBudgetAtLimit",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 		},
-		start: 3020,
-		end:   4000,
+		Start: 3020,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "TargetDown",
 			"namespace": "openshift-dns",
 			"severity":  "warning",
 		},
-		start: 3020,
-		end:   4000,
+		Start: 3020,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-dns",
 			"severity":  "warning",
 		},
-		start: 3020,
-		end:   4000,
+		Start: 3020,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-ingress-canary",
 			"severity":  "warning",
 		},
-		start: 3020,
-		end:   4000,
+		Start: 3020,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-network-operator",
 			"severity":  "warning",
 		},
-		start: 3020,
-		end:   4000,
+		Start: 3020,
+		End:   4000,
 	},
 	{
-		labels: map[string]string{
+		Labels: map[string]string{
 			"alertname": "TargetDown",
 			"namespace": "openshift-network-operator",
 			"severity":  "warning",
 		},
-		start: 3020,
-		end:   4000,
+		Start: 3020,
+		End:   4000,
 	},
+}
+
+func RelativeIntervalToAbsoluteInterval(ri utils.RelativeInterval, origin model.Time) processor.Interval {
+	labels := make(map[string]string)
+	for k, v := range ri.Labels {
+		labels[k] = v
+	}
+	labels["alertstate"] = "firing"
+
+	return processor.Interval{
+		Start:  origin.Add(time.Duration(float64(ri.Start) * float64(time.Minute))),
+		End:    origin.Add(time.Duration(float64(ri.End) * float64(time.Minute))),
+		Metric: prom.LabelSet{Labels: labels},
+	}
+}
+
+func RelativeToAbsoluteIntervals(relIntervals []utils.RelativeInterval, end model.Time) []processor.Interval {
+	maxEnd := 0
+	for _, relInterval := range relIntervals {
+		if relInterval.End > maxEnd {
+			maxEnd = relInterval.End
+		}
+	}
+
+	absStart := end.Add(time.Duration((float64)(-maxEnd) * float64(time.Minute)))
+
+	ret := make([]processor.Interval, len(relIntervals))
+	for i, ri := range relIntervals {
+		ret[i] = RelativeIntervalToAbsoluteInterval(ri, absStart)
+	}
+	return ret
 }
 
 func buildAlertIntervals() []processor.Interval {
 	end := model.TimeFromUnixNano(time.Now().UnixNano())
-	return relativeToAbsoluteIntervals(relIntervals, end)
+	return RelativeToAbsoluteIntervals(relIntervals, end)
 }
 
 // fmtInterval writes the interval to the writer in OpenMetrics format.

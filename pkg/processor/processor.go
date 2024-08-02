@@ -12,13 +12,20 @@ import (
 )
 
 // processor is the component responsible for continuously loading alerts from source
-// and cooridantes updating the health map metrics.
+// and coordinates updating the exported metrics.
 type processor struct {
-	healthMapMetrics  prom.MetricSet
+	// healthMapMetrics maps input signal (alerts) to components, incidents
+	// and normalized severity.
+	healthMapMetrics prom.MetricSet
+
+	// componentsMetrics maps components to their ranking via the metric value.
 	componentsMetrics prom.MetricSet
-	interval          time.Duration
-	loader            *prom.Loader
-	groupsCollection  *GroupsCollection
+
+	// interval is the time interval between processing iterations.
+	interval time.Duration
+
+	loader           *prom.Loader
+	groupsCollection *GroupsCollection
 }
 
 func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration) (*processor, error) {
@@ -51,11 +58,8 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 		return err
 	}
 
-	changes := MetricsChanges(alertsRange)
-
-	for _, change := range changes {
-		p.groupsCollection.ProcessIntervalsBatch(change.Intervals)
-	}
+	// Warm up the groups collection with historical alerts.
+	p.groupsCollection.processHisotricalAlerts(alertsRange)
 
 	// Update the group-ids from the history.
 	healthMapRV, err := p.loader.LoadVectorRange(ctx, "cluster:health:components:map", start, end, step)
