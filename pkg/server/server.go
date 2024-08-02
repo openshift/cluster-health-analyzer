@@ -15,6 +15,12 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 )
 
+const (
+	// HistoryLookback is the number of days to look back for alerts.
+	// This is used to build the groups collection to match against.
+	historyLookback = 4 * 24 * time.Hour
+)
+
 var (
 	healthMapMetrics = prom.NewMetricSet(
 		"cluster:health:components:map",
@@ -26,6 +32,8 @@ var (
 	)
 )
 
+// StartServer starts processing the metrics and serving them
+// on the /metrics endpoint.
 func StartServer(interval time.Duration) {
 	fmt.Println("Starting server")
 	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, interval)
@@ -34,9 +42,8 @@ func StartServer(interval time.Duration) {
 		return
 	}
 
-	// Load alerts for the last 4 days to build the groups collection to match against.
-	start := time.Now().Add(-4 * 24 * time.Hour)
 	end := time.Now()
+	start := end.Add(-1 * historyLookback)
 	step := time.Minute
 	err = processor.InitGroupsCollection(context.Background(), start, end, step)
 	if err != nil {

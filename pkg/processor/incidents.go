@@ -276,6 +276,14 @@ func (gc *GroupsCollection) ProcessIntervalsBatch(intervals []Interval) []Groupe
 	return groupedIntervals
 }
 
+func (gc *GroupsCollection) processHisotricalAlerts(alertsRange prom.RangeVector) {
+	changes := MetricsChanges(alertsRange)
+
+	for _, change := range changes {
+		gc.ProcessIntervalsBatch(change.Intervals)
+	}
+}
+
 func (gc *GroupsCollection) ProcessAlertsBatch(alerts []prom.Alert, timestamp time.Time) []prom.Alert {
 	modelT := model.TimeFromUnixNano(timestamp.UnixNano())
 
