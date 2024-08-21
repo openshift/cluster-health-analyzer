@@ -54,12 +54,12 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	slog.Info("Initializing groups collection", "start", start, "end", end, "step", step)
 	p.groupsCollection = &GroupsCollection{}
 
-	// TODO(falox): log the length of the results
 	slog.Info("Loading alerts range")
 	alertsRange, err := p.loader.LoadAlertsRange(ctx, start, end, step)
 	if err != nil {
 		return err
 	}
+	slog.Info("Loaded alerts range", "len", len(alertsRange))
 
 	// Warm up the groups collection with historical alerts.
 	slog.Info("Processing historical alerts")
@@ -70,6 +70,7 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	if err != nil {
 		return err
 	}
+	slog.Info("Loaded health map range", "len", len(healthMapRV))
 
 	slog.Info("Updating group-ids")
 	p.groupsCollection.UpdateGroupUUIDs(healthMapRV)
