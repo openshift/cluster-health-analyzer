@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -328,7 +329,7 @@ func simulate(outputFile string) {
 		return changes[i].Timestamp.Before(changes[j].Timestamp)
 	})
 
-	fmt.Printf("Changes: %d\n", len(changes))
+	slog.Info("Generating alerts", "changes", len(changes))
 
 	f, err := os.Create(outputFile)
 	must(err)
@@ -388,7 +389,7 @@ func simulate(outputFile string) {
 	}
 
 	for groupID, intervals := range groups {
-		fmt.Printf("Group %s\n", groupID)
+		slog.Info("Start generating group", "group_id", groupID)
 		start := intervals[0].Start
 		end := intervals[0].End
 		alerts := make(map[string]struct{})
@@ -403,7 +404,7 @@ func simulate(outputFile string) {
 			alertname := interval.Interval.Metric.MLabels()["alertname"]
 			alerts[alertname] = struct{}{}
 		}
-		fmt.Printf("Start: %s, End: %s\n", start, end)
-		fmt.Printf("Alerts: %v\n", alerts)
+
+		slog.Info("End generating group", "alerts", alerts, "start", start, "end", end)
 	}
 }
