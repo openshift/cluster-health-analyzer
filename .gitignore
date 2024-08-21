@@ -1,0 +1,23 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/**
+**/__debug_bin
+**/__pycache__
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool
+/*.out
+
+# editor and IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+/_output/
