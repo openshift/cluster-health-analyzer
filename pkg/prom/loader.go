@@ -43,7 +43,7 @@ func NewLoader() (*Loader, error) {
 
 		token, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/token`)
 		if err != nil {
-			slog.Error("Failed to read the SA token", "err", err)
+			slog.Error("Failed to read the service account token", "err", err)
 			return nil, err
 		}
 
