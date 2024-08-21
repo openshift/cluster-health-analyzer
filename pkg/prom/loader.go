@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -24,12 +24,13 @@ type Loader struct {
 }
 
 func NewLoader() (*Loader, error) {
-
 	var api_config api.Config
 
+	// TODO(falox): move prom_url to server.StartServer
+	// TODO(falox): use an explicit setting for HTTPS
 	prom_url, ok := os.LookupEnv("PROM_URL")
 	if !ok {
-		fmt.Println("DEV MODE: PROM_URL not found, defaulting to http://localhost:9090")
+		slog.Warn("DEV MODE: PROM_URL not found, defaulting to http://localhost:9090")
 		url := "http://localhost:9090"
 
 		api_config = api.Config{
@@ -37,19 +38,21 @@ func NewLoader() (*Loader, error) {
 		}
 
 	} else {
-		fmt.Println("PROD MODE: PROM_URL is set, connecting to in-cluster Prometheus via https")
+		slog.Info("PROD MODE: PROM_URL is set, connecting to in-cluster Prometheus via https")
 		url := prom_url
 
 		token, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/token`)
 		if err != nil {
-			fmt.Println("Error reading token", err)
+			slog.Error("Failed to read the SA token", "err", err)
+			return nil, err
 		}
 
 		certs := x509.NewCertPool()
 
 		pemData, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`)
 		if err != nil {
-			fmt.Println("error reading ca file", err)
+			slog.Error("Failed to read the CA certificate", "err", err)
+			return nil, err
 		}
 		certs.AppendCertsFromPEM(pemData)
 

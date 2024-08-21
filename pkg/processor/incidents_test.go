@@ -215,7 +215,7 @@ func TestGroupsCollectionProcessHistoricalAlerts(t *testing.T) {
 
 	gc := GroupsCollection{}
 
-	gc.processHisotricalAlerts(alerts)
+	gc.processHistoricalAlerts(alerts)
 
 	// Group GroupMatchers by group_id
 	groupsMap := make(map[string][]*GroupMatcher)
@@ -287,7 +287,7 @@ func TestGroupsCollectionUpdateGroupUUIDs(t *testing.T) {
 	alerts := utils.RelativeIntervalsToRangeVectors(alertsIntervals, start, 1*time.Minute)
 
 	gc := GroupsCollection{}
-	gc.processHisotricalAlerts(alerts)
+	gc.processHistoricalAlerts(alerts)
 
 	mappings := utils.RelativeIntervalsToRangeVectors(mappingIntervals, start, 1*time.Minute)
 

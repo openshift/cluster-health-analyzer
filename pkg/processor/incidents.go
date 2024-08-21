@@ -2,6 +2,7 @@ package processor
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
 	"sort"
@@ -262,21 +263,19 @@ func (gc *GroupsCollection) AddGroup(g *GroupMatcher) {
 }
 
 func (gc *GroupsCollection) ProcessIntervalsBatch(intervals []Interval) []GroupedInterval {
-	fmt.Printf("Processing %d intervals against %d groups\n", len(intervals), len(gc.Groups))
+	slog.Info("Processing", "intervals", len(intervals), "groups", len(gc.Groups))
 	groupedIntervals, unmatched := gc.tryMatchIntervals(intervals)
 
 	if len(unmatched) > 0 {
 		// Create new groups for the unmatched intervals.
 		newGroupedIntervals := gc.addIntervalsGroups(unmatched, nil)
-		for _, gi := range newGroupedIntervals {
-			groupedIntervals = append(groupedIntervals, gi)
-		}
+		groupedIntervals = append(groupedIntervals, newGroupedIntervals...)
 	}
 
 	return groupedIntervals
 }
 
-func (gc *GroupsCollection) processHisotricalAlerts(alertsRange prom.RangeVector) {
+func (gc *GroupsCollection) processHistoricalAlerts(alertsRange prom.RangeVector) {
 	changes := MetricsChanges(alertsRange)
 
 	for _, change := range changes {
@@ -350,9 +349,7 @@ func (gc *GroupsCollection) tryMatchIntervals(intervals []Interval) ([]GroupedIn
 		matchedGroup.End = max(matchedGroup.End, i.End)
 
 		newGroupedIntervals := gc.addIntervalsGroups([]Interval{i}, matchedGroup)
-		for _, gi := range newGroupedIntervals {
-			ret = append(ret, gi)
-		}
+		ret = append(ret, newGroupedIntervals...)
 	}
 	return ret, unmatched
 }
