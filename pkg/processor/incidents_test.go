@@ -42,7 +42,7 @@ func TestGroupsCollectionProcessAlertsBatch(t *testing.T) {
 
 	assert.Equal(t, case1[0].Labels["group_id"], case2[0].Labels["group_id"])
 
-	// Case 3: 3 alerts outside of the time range of time-based matcher,
+	// Case 3: 2 alerts outside of the time range of time-based matcher,
 	//
 	// They should not match the original group, but they should both become part
 	// of a new group.
@@ -100,7 +100,7 @@ func TestGroupsCollectionProcessAlertsBatch(t *testing.T) {
 // TestGroupsCollectionPruneGroups tests pruning of old groups.
 //
 // We check that groups that are not relevant anymore are pruned after certain
-// perdio of time.
+// period of time.
 func TestGroupsCollectionPruneGroups(t *testing.T) {
 	start := model.TimeFromUnixNano(
 		time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano())
