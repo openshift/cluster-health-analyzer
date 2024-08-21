@@ -4,7 +4,7 @@ package processor
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
@@ -51,22 +51,30 @@ func (p *processor) Start(ctx context.Context) {
 // The alerts are loaded for the given time range and step and prepares the structure
 // for assigning group-ids to the alerts.
 func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Time, step time.Duration) error {
+	slog.Info("Initializing groups collection", "start", start, "end", end, "step", step)
 	p.groupsCollection = &GroupsCollection{}
 
+	slog.Info("Loading alerts range")
 	alertsRange, err := p.loader.LoadAlertsRange(ctx, start, end, step)
 	if err != nil {
 		return err
 	}
+	slog.Info("Loaded alerts range", "len", len(alertsRange))
 
 	// Warm up the groups collection with historical alerts.
-	p.groupsCollection.processHisotricalAlerts(alertsRange)
+	slog.Info("Processing historical alerts")
+	p.groupsCollection.processHistoricalAlerts(alertsRange)
 
-	// Update the group-ids from the history.
+	slog.Info("Loading health map range")
 	healthMapRV, err := p.loader.LoadVectorRange(ctx, "cluster:health:components:map", start, end, step)
 	if err != nil {
 		return err
 	}
+	slog.Info("Loaded health map range", "len", len(healthMapRV))
+
+	slog.Info("Updating group-ids")
 	p.groupsCollection.UpdateGroupUUIDs(healthMapRV)
+
 	return nil
 }
 
@@ -80,16 +88,16 @@ func (p *processor) Run(ctx context.Context) {
 			ctx,
 			wait.Backoff{Duration: time.Second, Steps: 4, Factor: 1.5},
 			func(ctx context.Context) (bool, error) {
-				fmt.Println("Processing")
+				slog.Info("Begin processing")
 
 				err := p.Process(ctx)
 				if err != nil {
-					fmt.Println(err)
+					slog.Error("Error processing", "err", err)
 					// We don't return an error here because we want to keep retrying.
 					return false, nil
 				}
 
-				fmt.Println("Finished")
+				slog.Info("End processing")
 				return true, nil
 			})
 	}, p.interval, ctx.Done())
@@ -143,7 +151,6 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 	t := time.Now()
 	alerts, err := p.loader.LoadAlerts(ctx, t)
 	if err != nil {
-		fmt.Println(err)
 		return err
 	}
 

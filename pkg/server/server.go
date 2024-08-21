@@ -4,7 +4,7 @@ package server
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -35,10 +35,11 @@ var (
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
 func StartServer(interval time.Duration) {
-	fmt.Println("Starting server")
+	slog.Info("Starting server", "interval", interval.String())
+
 	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, interval)
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("Failed to create processor, terminating", "err", err)
 		return
 	}
 
@@ -47,7 +48,7 @@ func StartServer(interval time.Duration) {
 	step := time.Minute
 	err = processor.InitGroupsCollection(context.Background(), start, end, step)
 	if err != nil {
-		fmt.Println(err)
+		slog.Error("Failed to initialize groups collection, terminating", "err", err)
 		return
 	}
 
@@ -61,5 +62,7 @@ func StartServer(interval time.Duration) {
 		"/metrics",
 		promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
 	)
+
+	slog.Info("Serving metrics")
 	http.ListenAndServe(":8080", nil)
 }
