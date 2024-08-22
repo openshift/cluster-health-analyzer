@@ -41,7 +41,7 @@ var serveCmd = &cobra.Command{
 		}
 		interval := time.Duration(float64(seconds) * float64(time.Second))
 
-		slog.Info("Parameters", "interval", interval.String(), "url", url)
+		slog.Info("Parameters", "interval", interval, "url", url)
 
 		server.StartServer(interval, url)
 	},
