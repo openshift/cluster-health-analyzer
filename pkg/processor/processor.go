@@ -28,8 +28,8 @@ type processor struct {
 	groupsCollection *GroupsCollection
 }
 
-func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration) (*processor, error) {
-	promLoader, err := prom.NewLoader()
+func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration, prom_url string) (*processor, error) {
+	promLoader, err := prom.NewLoader(prom_url)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (p *processor) Run(ctx context.Context) {
 			ctx,
 			wait.Backoff{Duration: time.Second, Steps: 4, Factor: 1.5},
 			func(ctx context.Context) (bool, error) {
-				slog.Info("Begin processing")
+				slog.Info("Start processing")
 
 				err := p.Process(ctx)
 				if err != nil {

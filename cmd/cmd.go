@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,15 +19,31 @@ var rootCmd = &cobra.Command{
 	Long:  ``,
 }
 
-// Refresh interval in seconds.
-var interval int
-
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the server",
 	Long:  "Start the server to expose the metrics for the health analyzer",
 	Run: func(cmd *cobra.Command, args []string) {
-		server.StartServer(time.Duration(float64(interval) * float64(time.Second)))
+		url := cmd.Flags().Lookup("url").DefValue
+		if value, ok := os.LookupEnv("PROM_URL"); ok {
+			url = value
+		}
+		if cmd.Flags().Changed("url") {
+			url, _ = cmd.Flags().GetString("url")
+		}
+
+		seconds, _ := strconv.Atoi(cmd.Flags().Lookup("interval").DefValue)
+		if env, ok := os.LookupEnv("REFRESH_INTERVAL"); ok {
+			seconds, _ = strconv.Atoi(env)
+		}
+		if cmd.Flags().Changed("interval") {
+			seconds, _ = cmd.Flags().GetInt("interval")
+		}
+		interval := time.Duration(float64(seconds) * float64(time.Second))
+
+		slog.Info("Parameters", "interval", interval.String(), "url", url)
+
+		server.StartServer(interval, url)
 	},
 }
 
@@ -39,7 +57,8 @@ func Execute() {
 }
 
 func init() {
-	serveCmd.Flags().IntVarP(&interval, "interval", "i", 30, "refresh interval in seconds")
+	serveCmd.Flags().IntP("interval", "i", 30, "refresh interval in seconds")
+	serveCmd.Flags().StringP("url", "u", "http://localhost:9090", "URL of the Prometheus server")
 
 	rootCmd.AddCommand(simulate.SimulateCmd)
 	rootCmd.AddCommand(serveCmd)
