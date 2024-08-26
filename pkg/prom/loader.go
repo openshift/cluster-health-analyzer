@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
@@ -23,24 +26,17 @@ type Loader struct {
 	*loader
 }
 
-func NewLoader() (*Loader, error) {
-	var api_config api.Config
+func NewLoader(prometheusURL string) (*Loader, error) {
+	if !regexp.MustCompile(`^(http|https)://`).MatchString(prometheusURL) {
+		return nil, errors.New("invalid URL: must start with https:// or http://")
+	}
 
-	// TODO(falox): move prom_url to server.StartServer
-	// TODO(falox): use an explicit setting for HTTPS
-	prom_url, ok := os.LookupEnv("PROM_URL")
-	if !ok {
-		slog.Warn("DEV MODE: PROM_URL not found, defaulting to http://localhost:9090")
-		url := "http://localhost:9090"
+	api_config := api.Config{
+		Address: prometheusURL,
+	}
 
-		api_config = api.Config{
-			Address: url,
-		}
-
-	} else {
-		slog.Info("PROD MODE: PROM_URL is set, connecting to in-cluster Prometheus via https")
-		url := prom_url
-
+	use_tls := strings.HasPrefix(prometheusURL, "https://")
+	if use_tls {
 		token, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/token`)
 		if err != nil {
 			slog.Error("Failed to read the service account token", "err", err)
@@ -59,12 +55,9 @@ func NewLoader() (*Loader, error) {
 		defaultRt := api.DefaultRoundTripper.(*http.Transport)
 		defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
 
-		rt := prom_config.NewAuthorizationCredentialsRoundTripper("Bearer", prom_config.Secret(token), defaultRt)
-
-		api_config = api.Config{
-			Address:      url,
-			RoundTripper: rt,
-		}
+		api_config.RoundTripper = prom_config.NewAuthorizationCredentialsRoundTripper("Bearer", prom_config.Secret(token), defaultRt)
+	} else {
+		slog.Warn("Connecting to Prometheus without TLS")
 	}
 
 	promClient, err := api.NewClient(api_config)

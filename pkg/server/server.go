@@ -34,10 +34,10 @@ var (
 
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
-func StartServer(interval time.Duration) {
-	slog.Info("Starting server", "interval", interval.String())
+func StartServer(interval time.Duration, prometheusURL string) {
+	slog.Info("Starting server")
 
-	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, interval)
+	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, interval, prometheusURL)
 	if err != nil {
 		slog.Error("Failed to create processor, terminating", "err", err)
 		return
