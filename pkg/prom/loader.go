@@ -35,8 +35,8 @@ func NewLoader(url string) (*Loader, error) {
 		Address: url,
 	}
 
-	use_tsl := strings.HasPrefix(url, "https://")
-	if use_tsl {
+	use_tls := strings.HasPrefix(url, "https://")
+	if use_tls {
 		token, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/token`)
 		if err != nil {
 			slog.Error("Failed to read the service account token", "err", err)
