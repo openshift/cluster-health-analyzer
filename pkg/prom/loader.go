@@ -26,16 +26,16 @@ type Loader struct {
 	*loader
 }
 
-func NewLoader(url string) (*Loader, error) {
-	if !regexp.MustCompile(`^(http|https)://`).MatchString(url) {
+func NewLoader(prometheusURL string) (*Loader, error) {
+	if !regexp.MustCompile(`^(http|https)://`).MatchString(prometheusURL) {
 		return nil, errors.New("invalid URL: must start with https:// or http://")
 	}
 
 	api_config := api.Config{
-		Address: url,
+		Address: prometheusURL,
 	}
 
-	use_tls := strings.HasPrefix(url, "https://")
+	use_tls := strings.HasPrefix(prometheusURL, "https://")
 	if use_tls {
 		token, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/token`)
 		if err != nil {
