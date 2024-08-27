@@ -23,4 +23,4 @@ bin/**
 /_output/
 
 # can be created during testing, we should not commit it
-manifests/backend/02_metrics-client-ca_configmap.yaml
+manifests/backend/02_metrics_client_ca_configmap.yaml
