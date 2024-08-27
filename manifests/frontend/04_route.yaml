@@ -2,7 +2,7 @@ kind: Route
 apiVersion: route.openshift.io/v1
 metadata:
   name: cluster-health-console
-  namespace: cluster-health-analyzer
+  namespace: openshift-cluster-health-analyzer
   labels:
     app: cluster-health-console
 spec:

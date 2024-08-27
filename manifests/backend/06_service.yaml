@@ -1,0 +1,19 @@
+# creates service which we need for ServiceMonitor to scrape metrics
+# serving-cert-secret-name annotation is required to inject the secret into kube-rbac-proxy sidecar
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: kube-rbac-proxy-tls
+  labels:
+    app.kubernetes.io/name: cluster-health-analyzer
+  name: cluster-health-analyzer
+  namespace: openshift-cluster-health-analyzer
+spec:
+  ports:
+  - name: metrics
+    port: 8443
+    targetPort: metrics
+  selector:
+    app.kubernetes.io/name: cluster-health-analyzer
+  type: ClusterIP

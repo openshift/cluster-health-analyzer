@@ -1,4 +1,7 @@
+# creates a namespace, the label is required for the cluster-monitoring operator to pick it up
 kind: Namespace
 apiVersion: v1
 metadata:
-  name: cluster-health-analyzer
+  name: openshift-cluster-health-analyzer
+  labels:
+    openshift.io/cluster-monitoring: "true"

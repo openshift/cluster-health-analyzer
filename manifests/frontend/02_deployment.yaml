@@ -4,7 +4,7 @@ metadata:
   labels:
     app: cluster-health-console
   name: cluster-health-console
-  namespace: cluster-health-analyzer
+  namespace: openshift-cluster-health-analyzer
 spec:
   replicas: 1
   selector:
