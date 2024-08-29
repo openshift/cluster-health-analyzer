@@ -77,6 +77,36 @@ usage of the data for incidents navigation.
 
 ## Testing
 
+### Running locally
+
+In order to run the code outside of Kubernetes environment:
+
+1. start port-forwarding of thanos querier from existing OpenShift installation:
+
+``` sh
+./hack/listen-thanos.sh
+```
+
+2. run the service with disabled auth
+
+``` sh
+go run ./main.go serve --disable-auth-for-testing
+```
+
+The metrics should be exposed over https with self-signed certificates:
+
+``` sh
+curl -k https://localhost:8443/metrics
+```
+
+When logged into an OpenShift cluster with `$KUBECONFIG` variable pointing
+to the appropriated kubectl configuration, one can run the authenticated version
+of the service with:
+
+``` sh
+go run ./main.go serve --kubeconfig $KUBECONFIG
+```
+
 ### Data simulation
 
 For development purposes, it's useful to have some data filled in Prometheus.

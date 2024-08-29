@@ -1,5 +1,4 @@
 # creats a 1 pod deployment for the cluster-health-analyzer
-# kube-rbac-proxy sidecar is used to authenticate prometheus requests to scrape metrics
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,9 +22,9 @@ spec:
       - name: cluster-health-analyzer
         image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
         imagePullPolicy: Always
-        command:
-          - "cluster-health-analyzer"
-          - "serve"
+        args:
+          - --tls-cert-file=/etc/tls/private/tls.crt
+          - --tls-private-key-file=/etc/tls/private/tls.key
         env:
           - name: PROM_URL
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
@@ -36,24 +35,9 @@ spec:
             drop: ["ALL"]
           seccompProfile:
             type: RuntimeDefault
-      - args:
-        - --secure-listen-address=0.0.0.0:8443
-        - --upstream=http://127.0.0.1:8080
-        - --config-file=/etc/kube-rbac-proxy/config.yaml
-        - --tls-cert-file=/etc/tls/private/tls.crt
-        - --tls-private-key-file=/etc/tls/private/tls.key
-        - --client-ca-file=/etc/tls/client/client-ca.crt
-        - --logtostderr=true
-        - --allow-paths=/metrics
-        image: quay.io/brancz/kube-rbac-proxy:v0.18.0
-        name: kube-rbac-proxy
         ports:
         - containerPort: 8443
           name: metrics
-        resources:
-          requests:
-            cpu: 1m
-            memory: 15Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -61,22 +45,10 @@ spec:
             - ALL
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
-        - mountPath: /etc/kube-rbac-proxy
-          name: secret-kube-rbac-proxy-metric
-          readOnly: true
         - mountPath: /etc/tls/private
-          name: secret-kube-rbac-proxy-tls
-          readOnly: true
-        - mountPath: /etc/tls/client
-          name: metrics-client-ca
+          name: cluster-health-analyzer-tls
           readOnly: true
       volumes:
-      - name: secret-kube-rbac-proxy-tls
+      - name: cluster-health-analyzer-tls
         secret:
-          secretName: kube-rbac-proxy-tls
-      - name: secret-kube-rbac-proxy-metric
-        secret:
-          secretName: secret-kube-rbac-proxy-metric
-      - name: metrics-client-ca
-        configMap:
-          name: metrics-client-ca
+          secretName: cluster-health-analyzer-tls
