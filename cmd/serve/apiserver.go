@@ -2,17 +2,16 @@ package serve
 
 import (
 	"context"
-	"fmt"
-
-	"net"
 	"net/http"
 
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
+	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
+	"github.com/openshift/library-go/pkg/config/configdefaults"
+	"github.com/openshift/library-go/pkg/config/serving"
 	genericapiserver "k8s.io/apiserver/pkg/server"
-	genericoptions "k8s.io/apiserver/pkg/server/options"
 	utilversion "k8s.io/apiserver/pkg/util/version"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/server"
 )
@@ -56,40 +55,45 @@ func buildServer(o options) (server.Server, error) {
 // authentication/authorization.  and fulfill the minimum requirements for a
 // generic API server.
 func buildServerConfig(o options) (*genericapiserver.Config, error) {
-	err := o.SecureServing.MaybeDefaultWithSelfSignedCerts("localhost", nil,
-		[]net.IP{net.ParseIP("127.0.0.1")})
-	if err != nil {
-		return nil, fmt.Errorf("error creating self-signed certificates: %v", err)
+	// We need kubeClient only when authentication/authorization is enabled.
+	var kubeClient *kubernetes.Clientset
+
+	if !o.DisableAuthForTesting {
+		kubeConfig, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
+		if err != nil {
+			return nil, err
+		}
+
+		kubeClient, err = kubernetes.NewForConfig(kubeConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	scheme := runtime.NewScheme()
-	codecs := serializer.NewCodecFactory(scheme)
-	serverConfig := genericapiserver.NewConfig(codecs)
-	if err := o.SecureServing.ApplyTo(&serverConfig.SecureServing, &serverConfig.LoopbackClientConfig); err != nil {
+	servingInfo := configv1.HTTPServingInfo{}
+	configdefaults.SetRecommendedHTTPServingInfoDefaults(&servingInfo)
+
+	servingInfo.ServingInfo.CertInfo.CertFile = o.CertFile
+	servingInfo.ServingInfo.CertInfo.KeyFile = o.CertKey
+	// Don't set a CA file for client certificates because the CA is read from
+	// the kube-system/extension-apiserver-authentication ConfigMap.
+	servingInfo.ServingInfo.ClientCA = ""
+
+	serverConfig, err := serving.ToServerConfig(
+		context.Background(),
+		servingInfo,
+		operatorv1alpha1.DelegatedAuthentication{Disabled: o.DisableAuthForTesting},
+		operatorv1alpha1.DelegatedAuthorization{Disabled: o.DisableAuthForTesting},
+		o.Kubeconfig,
+		kubeClient,
+		nil,   // disable leader election
+		false, // disable http2
+	)
+	if err != nil {
 		return nil, err
 	}
 
-	if !o.DisableAuthForTesting {
-		authNOpts := genericoptions.NewDelegatingAuthenticationOptions()
-		authNOpts.RemoteKubeConfigFile = o.Kubeconfig
-
-		authZOpts := genericoptions.NewDelegatingAuthorizationOptions()
-		authZOpts.RemoteKubeConfigFile = o.Kubeconfig
-
-		if err := authNOpts.ApplyTo(&serverConfig.Authentication, serverConfig.SecureServing, nil); err != nil {
-			return nil, err
-		}
-		if err := authZOpts.ApplyTo(&serverConfig.Authorization); err != nil {
-			return nil, err
-		}
-	}
-
-	serverConfig.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(
-		GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(scheme))
-	serverConfig.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(
-		GetOpenAPIDefinitions, openapinamer.NewDefinitionNamer(scheme))
-	serverConfig.OpenAPIConfig.Info.Title = "cluster health analyzer"
-	serverConfig.OpenAPIV3Config.Info.Title = "cluster health analyzer"
+	// Set the effective version to avoid panics in the API server.
 	serverConfig.EffectiveVersion = utilversion.DefaultKubeEffectiveVersion()
 
 	// We will be serving out own `/metrics` endpoint.

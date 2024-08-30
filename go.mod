@@ -4,12 +4,16 @@ go 1.22.1
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/openshift/api v0.0.0-20240830142653-85dc560939ef
+	github.com/openshift/library-go v0.0.0-20240830130947-d9523164b328
 	github.com/prometheus/client_golang v1.19.1
 	github.com/prometheus/common v0.55.0
 	github.com/spf13/cobra v1.8.1
+	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
 	k8s.io/apimachinery v0.31.0
 	k8s.io/apiserver v0.31.0
+	k8s.io/client-go v0.31.0
 	k8s.io/component-base v0.31.0
 	sigs.k8s.io/metrics-server v0.7.2
 )
@@ -57,7 +61,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.14 // indirect
@@ -93,7 +96,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.31.0 // indirect
-	k8s.io/client-go v0.31.0 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kms v0.31.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340 // indirect

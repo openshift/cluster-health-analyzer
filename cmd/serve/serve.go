@@ -48,11 +48,11 @@ type options struct {
 	// Path to the kube-config file.
 	Kubeconfig string
 
+	CertFile string
+	CertKey  string
+
 	// Only to be used to for testing.
 	DisableAuthForTesting bool
-
-	// Options for secure serving using Kubernetes infra.
-	SecureServing *genericoptions.SecureServingOptionsWithLoopback
 }
 
 // newOptions initializes default values for the command options.
@@ -73,7 +73,6 @@ func newOptions() options {
 	return options{
 		RefreshInterval: refreshInterval,
 		PromURL:         promURL,
-		SecureServing:   secureServingOptions,
 	}
 }
 
@@ -86,8 +85,11 @@ func (o *options) flags() *pflag.FlagSet {
 		"URL of the Prometheus server")
 	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig,
 		"The path to the kubeconfig (defaults to in-cluster config)")
+
+	fs.StringVar(&o.CertFile, "tls-cert-file", "", "The path to the server certificate")
+	fs.StringVar(&o.CertKey, "tls-private-key", "", "The path to the server key")
+
 	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
 		"Flag for testing purposes to disable auth")
-	o.SecureServing.AddFlags(fs)
 	return fs
 }
