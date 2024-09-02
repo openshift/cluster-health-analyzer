@@ -28,8 +28,8 @@ type processor struct {
 	groupsCollection *GroupsCollection
 }
 
-func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration, prometheusURL string) (*processor, error) {
-	promLoader, err := prom.NewLoader(prometheusURL)
+func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration, promURL string) (*processor, error) {
+	promLoader, err := prom.NewLoader(promURL)
 	if err != nil {
 		return nil, err
 	}
