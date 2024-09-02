@@ -18,17 +18,9 @@ health perspective.
 
 ## Install
 
-Login to a cluster using `oc login` command. First we would need to create a manifest copying existing 
-ConfigMap in openshift-monitoring namespace (required by TLS endpoint to forward metrics to in-cluster Prometheus)
+Login to a cluster using `oc login` command.
 
 ```
-oc get configmap metrics-client-ca --namespace=openshift-monitoring -o yaml \
-	| yq e '.metadata.namespace |= sub("openshift-monitoring", "openshift-cluster-health-analyzer")' - \
-	| yq e 'del(.metadata.resourceVersion)' - \
-	| yq e 'del(.metadata.uid)' - \
-	| yq e 'del(.metadata.labels)' - \
-	| yq e 'del(.metadata.creationTimestamp)' - > manifests/backend/02_metrics_client_ca_configmap.yaml
-
 oc apply -f manifests/backend -f manifests/frontend
 ```
 
@@ -106,6 +98,9 @@ of the service with:
 ``` sh
 go run ./main.go serve --kubeconfig $KUBECONFIG
 ```
+
+Note that because it will require proper authentication and your local machine 
+does not have client CAs you would no longer be able to retrieve the metrics locally.
 
 ### Data simulation
 
