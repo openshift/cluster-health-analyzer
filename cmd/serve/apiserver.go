@@ -51,7 +51,7 @@ func buildServer(o options) (server.Server, error) {
 // buildServerConfig creates a minimal genericapiserver.Config object
 // for the provided options.
 //
-// It's main responsibility is to configure secure serving and
+// Its main responsibility is to configure secure serving and
 // authentication/authorization.  and fulfill the minimum requirements for a
 // generic API server.
 func buildServerConfig(o options) (*genericapiserver.Config, error) {
