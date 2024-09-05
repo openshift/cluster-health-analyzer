@@ -87,7 +87,7 @@ func (o *options) flags() *pflag.FlagSet {
 		"The path to the kubeconfig (defaults to in-cluster config)")
 
 	fs.StringVar(&o.CertFile, "tls-cert-file", "", "The path to the server certificate")
-	fs.StringVar(&o.CertKey, "tls-private-key", "", "The path to the server key")
+	fs.StringVar(&o.CertKey, "tls-private-key-file", "", "The path to the server key")
 
 	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
 		"Flag for testing purposes to disable auth")

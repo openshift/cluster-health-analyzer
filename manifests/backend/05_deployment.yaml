@@ -20,7 +20,7 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: cluster-health-analyzer
-        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
+        image: "quay.io/kgordeev/cluster-analyzer:latest"
         imagePullPolicy: Always
         args:
           - --tls-cert-file=/etc/tls/private/tls.crt

@@ -1,5 +1,5 @@
 # Build the binary
-FROM docker.io/golang:1.22.1 as builder
+FROM docker.io/golang:1.22.1 AS builder
 WORKDIR /src
 # Download and cache go modules before building.
 COPY go.mod go.mod
