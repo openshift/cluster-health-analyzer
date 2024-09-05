@@ -1,10 +1,11 @@
+# creats a 1 pod deployment for the cluster-health-analyzer
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
     app.kubernetes.io/name: cluster-health-analyzer
   name: cluster-health-analyzer
-  namespace: cluster-health-analyzer
+  namespace: openshift-cluster-health-analyzer
 spec:
   replicas: 1
   selector:
@@ -21,15 +22,12 @@ spec:
       - name: cluster-health-analyzer
         image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
         imagePullPolicy: Always
-        command:
-          - "cluster-health-analyzer"
-          - "serve"
+        args:
+          - --tls-cert-file=/etc/tls/private/tls.crt
+          - --tls-private-key-file=/etc/tls/private/tls.key
         env:
           - name: PROM_URL
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
-        ports:
-        - containerPort: 8080
-          name: metrics
         securityContext:
           runAsNonRoot: true
           allowPrivilegeEscalation: false
@@ -37,3 +35,15 @@ spec:
             drop: ["ALL"]
           seccompProfile:
             type: RuntimeDefault
+        ports:
+        - containerPort: 8443
+          name: metrics
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/tls/private
+          name: cluster-health-analyzer-tls
+          readOnly: true
+      volumes:
+      - name: cluster-health-analyzer-tls
+        secret:
+          secretName: cluster-health-analyzer-tls

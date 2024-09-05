@@ -32,9 +32,18 @@ var (
 	)
 )
 
+// Server is the interface for serving the metrics.
+type Server interface {
+	// Handle registers a handler for the given pattern, similar to http.Handle.
+	Handle(pattern string, handler http.Handler)
+
+	// Start starts the server and blocks until the server is stopped.
+	Start(ctx context.Context) error
+}
+
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
-func StartServer(interval time.Duration, prometheusURL string) {
+func StartServer(interval time.Duration, prometheusURL string, server Server) {
 	slog.Info("Starting server")
 
 	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, interval, prometheusURL)
@@ -58,11 +67,13 @@ func StartServer(interval time.Duration, prometheusURL string) {
 	reg.MustRegister(healthMapMetrics)
 	reg.MustRegister(componentsMetrics)
 
-	http.Handle(
-		"/metrics",
-		promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
-	)
-
 	slog.Info("Serving metrics")
-	http.ListenAndServe(":8080", nil)
+
+	server.Handle("/metrics",
+		promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+
+	err = server.Start(context.Background())
+	if err != nil {
+		slog.Error("Failed to run server", "err", err)
+	}
 }

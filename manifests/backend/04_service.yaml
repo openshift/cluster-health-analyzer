@@ -1,16 +1,19 @@
+# creates service which we need for ServiceMonitor to scrape metrics
+# serving-cert-secret-name annotation is required to inject the proper serving certs
 apiVersion: v1
 kind: Service
 metadata:
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: cluster-health-analyzer-tls
   labels:
     app.kubernetes.io/name: cluster-health-analyzer
   name: cluster-health-analyzer
-  namespace: cluster-health-analyzer
+  namespace: openshift-cluster-health-analyzer
 spec:
   ports:
   - name: metrics
-    port: 8080
-    protocol: TCP
-    targetPort: 8080
+    port: 8443
+    targetPort: metrics
   selector:
     app.kubernetes.io/name: cluster-health-analyzer
   type: ClusterIP

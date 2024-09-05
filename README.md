@@ -18,6 +18,8 @@ health perspective.
 
 ## Install
 
+Login to a cluster using `oc login` command.
+
 ```
 oc apply -f manifests/backend -f manifests/frontend
 ```
@@ -66,6 +68,39 @@ See https://github.com/openshift/cluster-health-console-prototype of an example
 usage of the data for incidents navigation.
 
 ## Testing
+
+### Running locally
+
+In order to run the code outside of Kubernetes environment:
+
+1. start port-forwarding of thanos querier from existing OpenShift installation:
+
+``` sh
+./hack/listen-thanos.sh
+```
+
+2. run the service with disabled auth
+
+``` sh
+go run ./main.go serve --disable-auth-for-testing
+```
+
+The metrics should be exposed over https with self-signed certificates:
+
+``` sh
+curl -k https://localhost:8443/metrics
+```
+
+When logged into an OpenShift cluster with `$KUBECONFIG` variable pointing
+to the appropriated kubectl configuration, one can run the authenticated version
+of the service with:
+
+``` sh
+go run ./main.go serve --kubeconfig $KUBECONFIG
+```
+
+Note that because it will require proper authentication and your local machine 
+does not have client CAs you would no longer be able to retrieve the metrics locally.
 
 ### Data simulation
 

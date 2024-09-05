@@ -55,7 +55,8 @@ func NewLoader(prometheusURL string) (*Loader, error) {
 		defaultRt := api.DefaultRoundTripper.(*http.Transport)
 		defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
 
-		api_config.RoundTripper = prom_config.NewAuthorizationCredentialsRoundTripper("Bearer", prom_config.Secret(token), defaultRt)
+		api_config.RoundTripper = prom_config.NewAuthorizationCredentialsRoundTripper(
+			"Bearer", prom_config.NewInlineSecret(string(token)), defaultRt)
 	} else {
 		slog.Warn("Connecting to Prometheus without TLS")
 	}
