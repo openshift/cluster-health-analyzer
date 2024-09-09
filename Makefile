@@ -75,6 +75,6 @@ deploy:
 undeploy:
 	oc delete -f manifests/backend manifests/frontend
 
-## all> run linting and unit tests
+## precommit> run linting and unit tests
 .PHONY: precommit
 precommit: lint test
