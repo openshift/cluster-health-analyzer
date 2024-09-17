@@ -10,9 +10,9 @@ RUN go mod download
 COPY cmd cmd
 COPY pkg pkg
 COPY main.go main.go
-RUN CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=readonly go build -o /bin/cluster-health-analyzer
+RUN CGO_ENABLED=1 GOOS=linux GOFLAGS=-mod=readonly go build -o /bin/cluster-health-analyzer
 
-FROM registry.access.redhat.com/ubi9-minimal:9.4
+FROM registry.access.redhat.com/ubi8-minimal:latest
 WORKDIR /
 
 COPY --from=builder /bin/cluster-health-analyzer /bin/cluster-health-analyzer
