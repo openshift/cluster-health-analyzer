@@ -57,7 +57,7 @@ It's possible to generate sample alerts + corresponding components and incidents
 mappings via the following script:
 
 ``` sh
-go run ./main.go simulate
+make simulate
 ```
 or
 ``` sh
