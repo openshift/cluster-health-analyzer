@@ -342,7 +342,8 @@ func simulate(outputFile string) {
 	fmt.Fprintln(w, "# HELP ALERTS Alert status")
 	fmt.Fprintln(w, "# TYPE ALERTS gauge")
 	for _, i := range intervals {
-		fmtInterval(w, "ALERTS", i.Metric.MLabels(), i.Start, i.End, step, 1)
+		err := fmtInterval(w, "ALERTS", i.Metric.MLabels(), i.Start, i.End, step, 1)
+		must(err)
 	}
 
 	// Output cluster:health:components
@@ -350,10 +351,11 @@ func simulate(outputFile string) {
 	fmt.Fprintln(w, "# TYPE cluster:health:components gauge")
 	ranks := processor.BuildComponentRanks()
 	for _, rank := range ranks {
-		fmtInterval(w, "cluster:health:components", map[string]string{
+		err := fmtInterval(w, "cluster:health:components", map[string]string{
 			"layer":     rank.Layer,
 			"component": rank.Component,
 		}, start, end, step, float64(rank.Rank))
+		must(err)
 	}
 
 	gc := &processor.GroupsCollection{}

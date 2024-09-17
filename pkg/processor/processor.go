@@ -84,7 +84,7 @@ func (p *processor) Run(ctx context.Context) {
 	wait.Until(func() {
 		// wait.ExponentialBackoffWithContext provides a backoff mechanism
 		// in case of errors during the Process method execution.
-		wait.ExponentialBackoffWithContext(
+		err := wait.ExponentialBackoffWithContext(
 			ctx,
 			wait.Backoff{Duration: time.Second, Steps: 4, Factor: 1.5},
 			func(ctx context.Context) (bool, error) {
@@ -100,6 +100,9 @@ func (p *processor) Run(ctx context.Context) {
 				slog.Info("End processing")
 				return true, nil
 			})
+		if err != nil {
+			slog.Error("Error processing", "err", err)
+		}
 	}, p.interval, ctx.Done())
 }
 

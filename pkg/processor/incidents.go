@@ -673,9 +673,4 @@ func (gc *GroupsCollection) UpdateGroupUUIDs(healthMapRV prom.RangeVector) {
 			}
 		}
 	}
-
-	mappedGroupIDsStr := make([]string, 0, len(mappedGroupIDs))
-	for k := range mappedGroupIDs {
-		mappedGroupIDsStr = append(mappedGroupIDsStr, k)
-	}
 }
