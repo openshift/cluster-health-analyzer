@@ -11,6 +11,9 @@ COPY pkg pkg
 COPY main.go main.go
 
 ENV GOOS=${TARGETOS:-linux}
+# GOARCH has no default, so the binary builds for the host. On Apple M1, BUILDPLATFORM is set to 
+# linux/arm64; on Apple x86, it's linux/amd64. Leaving it empty ensures the container and binary 
+# match the host platform.
 ENV GOARCH=${TARGETARCH}
 ENV CGO_ENABLED=1
 ENV GOFLAGS=-mod=readonly
