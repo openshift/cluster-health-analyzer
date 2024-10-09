@@ -77,7 +77,7 @@ Finally, one can copy the files to the cluster that's running the health analyze
 ``` sh
 for d in data/*; do
   echo $d
-  kubectl cp $d openshift-user-workload-monitoring/prometheus-user-workload-0:/prometheus -c prometheus
+  kubectl cp $d openshift-monitoring/prometheus-k8s-0:/prometheus -c prometheus
 done
 ```
 
