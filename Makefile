@@ -59,7 +59,7 @@ run:
 ## simulate> simulate test data and creates cluster-health-analyzer-openmetrics.txt in openmetrics format
 .PHONY: simulate
 simulate:
-	go run ./main.go simulate
+	go run ./main.go simulate $(if $(SCENARIO),--scenario $(SCENARIO))
 
 # ----------------
 # Deploy

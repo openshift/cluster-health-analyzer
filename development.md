@@ -53,16 +53,37 @@ full list run `make help`.
 
 For development purposes, it's useful to have some data filled in Prometheus.
 
-It's possible to generate sample alerts + corresponding components and incidents
-mappings via the following script:
+It's possible to generate sample alerts + corresponding component and incident
+mappings using the following command:
 
 ``` sh
-make simulate
+SCENARIO=input.csv make simulate
 ```
 or
 ``` sh
-go run ./main.go simulate
+go run ./main.go simulate --scenario input.csv
 ```
+
+The CSV file defines the alerts to be generated and has the following format:
+
+| Field      | Description |
+|------------|-------------|
+| start      | Start offset in minutes |
+| end        | End offset in minutes |
+| alertname  | Alert name (e.g. `KubePodCrashLooping`) |
+| namespace  | Alert namespace (e.g. `openshift-monitoring`) |
+| severity   | Alert severity (e.g. `warning`, `critical`) |
+| labels     | Optional JSON object with additional alert labels, in the form of `{"key":"value"}` (e.g. `{"component":"node-exporter"}`) |
+
+Example:
+
+```
+start,end,alertname,namespace,severity,labels
+0,60,Watchdog,openshift-monitoring,warning,
+10,40,ClusterOperatorDegraded,openshift-cluster-version,warning,{"name": "machine-config"}
+```
+
+If the CSV file is not provided, the script will generate a default set of alerts (see `simulate.go`).
 
 This script generates `cluster-health-analyzer-openmetrics.txt` file. It can be
 then turned into tsdb files via `promtool`, that's available as part of prometheus

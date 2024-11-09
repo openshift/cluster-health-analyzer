@@ -2,11 +2,15 @@ package simulate
 
 import (
 	"bufio"
+	"encoding/csv"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,20 +29,22 @@ func must(err error) {
 }
 
 var outputFile = "cluster-health-analyzer-openmetrics.txt"
+var csvFile string
 
 var SimulateCmd = &cobra.Command{
 	Use:   "simulate",
 	Short: "Generate simulated data in openmetrics format",
 	Run: func(cmd *cobra.Command, args []string) {
-		simulate(outputFile)
+		simulate(outputFile, csvFile)
 	},
 }
 
 func init() {
 	SimulateCmd.Flags().StringVarP(&outputFile, "output", "o", outputFile, "output file")
+	SimulateCmd.Flags().StringVarP(&csvFile, "scenario", "s", "", "CSV file with the scenario to simulate")
 }
 
-var relIntervals = []utils.RelativeInterval{
+var defaultRelativeIntervals = []utils.RelativeInterval{
 	{
 		Labels: map[string]string{
 			"alertname": "Watchdog",
@@ -252,9 +258,94 @@ func RelativeToAbsoluteIntervals(relIntervals []utils.RelativeInterval, end mode
 	return ret
 }
 
-func buildAlertIntervals() []processor.Interval {
+func readIntervalsFromCSV(csvFile string) ([]utils.RelativeInterval, error) {
+	file, err := os.Open(csvFile)
+	if err != nil {
+		slog.Error("Failed to open CSV file", "error", err)
+		return nil, err
+	}
+	defer file.Close()
+
+	return parseIntervalsFromCSV(file)
+}
+
+func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
+	var intervals []utils.RelativeInterval
+	scanner := bufio.NewScanner(file)
+
+	// Skip the first line with header
+	scanner.Scan()
+	line := 1
+
+	for scanner.Scan() {
+		line++
+		csvReader := csv.NewReader(strings.NewReader(scanner.Text()))
+		csvReader.LazyQuotes = true
+		fields, err := csvReader.Read()
+		if err != nil {
+			slog.Error("Invalid CSV format", "line", line, "error", err)
+			return nil, err
+		} else if len(fields) != 6 {
+			slog.Error("Invalid number of fields", "line", line, "expected", 6, "got", len(fields))
+			return nil, errors.New("CSV parsing error")
+		}
+
+		start, err := strconv.Atoi(fields[0])
+		if err != nil {
+			slog.Error("Invalid start time", "line", line, "error", err)
+			return nil, err
+		}
+
+		end, err := strconv.Atoi(fields[1])
+		if err != nil {
+			slog.Error("Invalid end time", "line", line, "error", err)
+			return nil, err
+		}
+
+		labels := map[string]string{
+			"alertname": fields[2],
+			"namespace": fields[3],
+			"severity":  fields[4],
+		}
+
+		// Parse additional labels, if present
+		if fields[5] != "" {
+			var additionalLabels map[string]string
+			err := json.Unmarshal([]byte(fields[5]), &additionalLabels)
+			if err != nil {
+				slog.Error("Invalid additional labels JSON", "line", line, "error", err)
+				return nil, err
+			}
+			for k, v := range additionalLabels {
+				labels[k] = v
+			}
+		}
+
+		intervals = append(intervals, utils.RelativeInterval{
+			Labels: labels,
+			Start:  start,
+			End:    end,
+		})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return intervals, nil
+}
+
+func buildAlertIntervals(csvFile string) ([]processor.Interval, error) {
 	end := model.TimeFromUnixNano(time.Now().UnixNano())
-	return RelativeToAbsoluteIntervals(relIntervals, end)
+	intervals := defaultRelativeIntervals
+	if csvFile != "" {
+		csvIntervals, err := readIntervalsFromCSV(csvFile)
+		if err != nil {
+			return nil, err
+		}
+		intervals = csvIntervals
+	}
+	return RelativeToAbsoluteIntervals(intervals, end), nil
 }
 
 // fmtInterval writes the interval to the writer in OpenMetrics format.
@@ -294,9 +385,11 @@ func fmtInterval(
 	return nil
 }
 
-func simulate(outputFile string) {
+func simulate(outputFile, csvFile string) {
 	// Build sample intervals.
-	intervals := buildAlertIntervals()
+	intervals, err := buildAlertIntervals(csvFile)
+	must(err)
+	slog.Info("Generated intervals", "num", len(intervals))
 
 	step := 5 * time.Minute
 	start := intervals[0].Start
@@ -328,8 +421,6 @@ func simulate(outputFile string) {
 	sort.Slice(changes, func(i, j int) bool {
 		return changes[i].Timestamp.Before(changes[j].Timestamp)
 	})
-
-	slog.Info("Generating alerts", "changes", len(changes))
 
 	f, err := os.Create(outputFile)
 	must(err)
@@ -390,8 +481,7 @@ func simulate(outputFile string) {
 		groups[gi.GroupMatcher.RootGroupID] = append(groups[gi.GroupMatcher.RootGroupID], gi)
 	}
 
-	for groupID, intervals := range groups {
-		slog.Info("Start generating group", "group_id", groupID)
+	for _, intervals := range groups {
 		start := intervals[0].Start
 		end := intervals[0].End
 		alerts := make(map[string]struct{})
@@ -406,7 +496,9 @@ func simulate(outputFile string) {
 			alertname := interval.Interval.Metric.MLabels()["alertname"]
 			alerts[alertname] = struct{}{}
 		}
-
-		slog.Info("End generating group", "alerts", alerts, "start", start, "end", end)
 	}
+
+	slog.Info("Generated incidents", "num", len(groups))
+
+	slog.Info("Openmetrics file saved", "output", outputFile)
 }
