@@ -29,19 +29,19 @@ func must(err error) {
 }
 
 var outputFile = "cluster-health-analyzer-openmetrics.txt"
-var csvFile string
+var scenarioFile string
 
 var SimulateCmd = &cobra.Command{
 	Use:   "simulate",
 	Short: "Generate simulated data in openmetrics format",
 	Run: func(cmd *cobra.Command, args []string) {
-		simulate(outputFile, csvFile)
+		simulate(outputFile, scenarioFile)
 	},
 }
 
 func init() {
 	SimulateCmd.Flags().StringVarP(&outputFile, "output", "o", outputFile, "output file")
-	SimulateCmd.Flags().StringVarP(&csvFile, "scenario", "s", "", "CSV file with the scenario to simulate")
+	SimulateCmd.Flags().StringVarP(&scenarioFile, "scenario", "s", "", "CSV file with the scenario to simulate")
 }
 
 var defaultRelativeIntervals = []utils.RelativeInterval{
@@ -258,8 +258,8 @@ func RelativeToAbsoluteIntervals(relIntervals []utils.RelativeInterval, end mode
 	return ret
 }
 
-func readIntervalsFromCSV(csvFile string) ([]utils.RelativeInterval, error) {
-	file, err := os.Open(csvFile)
+func readIntervalsFromCSV(scenarioFile string) ([]utils.RelativeInterval, error) {
+	file, err := os.Open(scenarioFile)
 	if err != nil {
 		slog.Error("Failed to open CSV file", "error", err)
 		return nil, err
@@ -335,11 +335,11 @@ func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 	return intervals, nil
 }
 
-func buildAlertIntervals(csvFile string) ([]processor.Interval, error) {
+func buildAlertIntervals(scenarioFile string) ([]processor.Interval, error) {
 	end := model.TimeFromUnixNano(time.Now().UnixNano())
 	intervals := defaultRelativeIntervals
-	if csvFile != "" {
-		csvIntervals, err := readIntervalsFromCSV(csvFile)
+	if scenarioFile != "" {
+		csvIntervals, err := readIntervalsFromCSV(scenarioFile)
 		if err != nil {
 			return nil, err
 		}
@@ -385,9 +385,9 @@ func fmtInterval(
 	return nil
 }
 
-func simulate(outputFile, csvFile string) {
+func simulate(outputFile, scenarioFile string) {
 	// Build sample intervals.
-	intervals, err := buildAlertIntervals(csvFile)
+	intervals, err := buildAlertIntervals(scenarioFile)
 	must(err)
 	slog.Info("Generated intervals", "num", len(intervals))
 
