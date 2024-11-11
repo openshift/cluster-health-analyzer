@@ -271,23 +271,27 @@ func readIntervalsFromCSV(scenarioFile string) ([]utils.RelativeInterval, error)
 
 func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 	var intervals []utils.RelativeInterval
-	scanner := bufio.NewScanner(file)
-
-	// Skip the first line with header
-	scanner.Scan()
-	line := 1
-
-	for scanner.Scan() {
+	csvReader := csv.NewReader(file)
+	csvReader.LazyQuotes = true
+	line := 0
+	for {
 		line++
-		csvReader := csv.NewReader(strings.NewReader(scanner.Text()))
-		csvReader.LazyQuotes = true
+
 		fields, err := csvReader.Read()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
 			slog.Error("Invalid CSV format", "line", line, "error", err)
 			return nil, err
 		} else if len(fields) != 6 {
 			slog.Error("Invalid number of fields", "line", line, "expected", 6, "got", len(fields))
 			return nil, errors.New("CSV parsing error")
+		}
+
+		// Skip the header
+		if line == 1 {
+			continue
 		}
 
 		start, err := strconv.Atoi(fields[0])
@@ -326,10 +330,6 @@ func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 			Start:  start,
 			End:    end,
 		})
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	return intervals, nil
