@@ -21,6 +21,9 @@ type processor struct {
 	// componentsMetrics maps components to their ranking via the metric value.
 	componentsMetrics prom.MetricSet
 
+	// severityCountsMetrics exposes the current counts of group_ids by severity.
+	severityCountsMetrics prom.MetricSet
+
 	// interval is the time interval between processing iterations.
 	interval time.Duration
 
@@ -28,16 +31,17 @@ type processor struct {
 	groupsCollection *GroupsCollection
 }
 
-func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration, promURL string) (*processor, error) {
+func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, severityCountsMetrics prom.MetricSet, interval time.Duration, promURL string) (*processor, error) {
 	promLoader, err := prom.NewLoader(promURL)
 	if err != nil {
 		return nil, err
 	}
 	return &processor{
-		healthMapMetrics:  healthMapMetrics,
-		componentsMetrics: componentsMetrics,
-		interval:          interval,
-		loader:            promLoader,
+		healthMapMetrics:      healthMapMetrics,
+		componentsMetrics:     componentsMetrics,
+		severityCountsMetrics: severityCountsMetrics,
+		interval:              interval,
+		loader:                promLoader,
 	}, nil
 }
 
@@ -173,7 +177,59 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 	}
 	p.healthMapMetrics.Update(metrics)
 
+	groupsBySeverity := getSeverityCounts(alertsHealthMap)
+	metrics = make([]prom.Metric, 0, len(groupsBySeverity))
+	for severity, count := range groupsBySeverity {
+		metrics = append(metrics, prom.Metric{
+			Labels: map[string]string{
+				"severity": severity,
+			},
+			Value: float64(count),
+		})
+	}
+	p.severityCountsMetrics.Update(metrics)
+
 	return nil
+}
+
+func getSeverityCounts(healthMaps []ComponentHealthMap) map[string]int {
+	groupSeverities := getGroupSeverities(healthMaps)
+
+	// Count group IDs per severity
+	severityCounts := make(map[string]int)
+	for _, severity := range groupSeverities {
+		severityCounts[severity]++
+	}
+
+	return severityCounts
+}
+
+func getGroupSeverities(healthMaps []ComponentHealthMap) map[string]string {
+	severityOrder := map[string]int{
+		"critical": 3,
+		"warning":  2,
+		"info":     1,
+	}
+
+	// Compute the highest severity for each group
+	groupSeverities := make(map[string]string)
+	for _, alert := range healthMaps {
+		groupID := alert.GroupId
+		if groupID == "" {
+			continue
+		}
+		severity, exists := alert.SrcLabels["severity"]
+		if !exists {
+			continue
+		}
+
+		// If this group hasn't been seen before, or if new severity is higher
+		if prevSeverity, exists := groupSeverities[groupID]; !exists ||
+			severityOrder[severity] > severityOrder[prevSeverity] {
+			groupSeverities[groupID] = severity
+		}
+	}
+	return groupSeverities
 }
 
 func (p *processor) updateComponentsMetrics() {

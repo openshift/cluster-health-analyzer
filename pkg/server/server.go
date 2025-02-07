@@ -30,6 +30,10 @@ var (
 		"cluster:health:components",
 		"Cluster components and their ranking.",
 	)
+	severityCountsMetrics = prom.NewMetricSet(
+		"cluster:health:group_severity_count",
+		"Current counts of group_ids by severity.",
+	)
 )
 
 // Server is the interface for serving the metrics.
@@ -46,7 +50,7 @@ type Server interface {
 func StartServer(interval time.Duration, prometheusURL string, server Server) {
 	slog.Info("Starting server")
 
-	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, interval, prometheusURL)
+	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, severityCountsMetrics, interval, prometheusURL)
 	if err != nil {
 		slog.Error("Failed to create processor, terminating", "err", err)
 		return
@@ -66,6 +70,7 @@ func StartServer(interval time.Duration, prometheusURL string, server Server) {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(healthMapMetrics)
 	reg.MustRegister(componentsMetrics)
+	reg.MustRegister(severityCountsMetrics)
 
 	slog.Info("Serving metrics")
 
