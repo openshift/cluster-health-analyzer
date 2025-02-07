@@ -17,7 +17,6 @@ ENV GOOS=${TARGETOS:-linux}
 ENV GOARCH=${TARGETARCH}
 ENV CGO_ENABLED=1
 ENV GOFLAGS=-mod=readonly
-ENV GOEXPERIMENT=strictfipsruntime
 RUN go build -tags strictfipsruntime -o /bin/cluster-health-analyzer
 
 FROM registry.access.redhat.com/ubi9-minimal:latest
