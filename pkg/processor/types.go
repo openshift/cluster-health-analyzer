@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // # Component Health Map
@@ -38,6 +39,32 @@ const (
 
 	SrcLabelPrefix = "src_"
 )
+
+func (h HealthValue) String() string {
+	switch h {
+	case Healthy:
+		return "info"
+	case Warning:
+		return "warning"
+	case Critical:
+		return "critical"
+	default:
+		return "none"
+	}
+}
+func ParseHealthValue(s string) HealthValue {
+	switch strings.ToLower(s) {
+	case "info":
+		return Healthy
+	case "warning":
+		return Warning
+	case "critical":
+		return Critical
+	default:
+		// We don't recognize the severity, so we'll default to warning
+		return Warning
+	}
+}
 
 // hashLabelValues returns a hash of the labels of the component.
 //
