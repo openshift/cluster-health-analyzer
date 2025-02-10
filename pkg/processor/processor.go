@@ -200,7 +200,7 @@ func (p *processor) computeSeverityCountMetrics(alertsHealthMap []ComponentHealt
 }
 
 func countSeverities(healthMaps []ComponentHealthMap) map[string]int {
-	healthValues := getCurrentHealthValues(healthMaps)
+	healthValues := getCurrentMaxHealthValues(healthMaps)
 	severities := convertHealthValuesToSeverities(healthValues)
 
 	count := make(map[string]int)
@@ -211,15 +211,7 @@ func countSeverities(healthMaps []ComponentHealthMap) map[string]int {
 	return count
 }
 
-func convertHealthValuesToSeverities(healthValues map[string]HealthValue) []string {
-	severities := make([]string, 0, len(healthValues))
-	for _, health := range healthValues {
-		severities = append(severities, health.String())
-	}
-	return severities
-}
-
-func getCurrentHealthValues(healthMaps []ComponentHealthMap) map[string]HealthValue {
+func getCurrentMaxHealthValues(healthMaps []ComponentHealthMap) map[string]HealthValue {
 	healthValues := make(map[string]HealthValue)
 	for _, alert := range healthMaps {
 		groupID := alert.GroupId
@@ -230,6 +222,14 @@ func getCurrentHealthValues(healthMaps []ComponentHealthMap) map[string]HealthVa
 		healthValues[groupID] = max(healthValues[groupID], health)
 	}
 	return healthValues
+}
+
+func convertHealthValuesToSeverities(healthValues map[string]HealthValue) []string {
+	severities := make([]string, 0, len(healthValues))
+	for _, health := range healthValues {
+		severities = append(severities, health.String())
+	}
+	return severities
 }
 
 func (p *processor) updateComponentsMetrics() {
