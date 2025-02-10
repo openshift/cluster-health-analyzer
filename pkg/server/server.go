@@ -31,7 +31,7 @@ var (
 		"Cluster components and their ranking.",
 	)
 	groupSeverityCountMetrics = prom.NewMetricSet(
-		"cluster:health:group_severity_count",
+		"cluster:health:group_severity:count",
 		"Current counts of group_ids by severity.",
 	)
 )
