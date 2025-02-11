@@ -21,6 +21,9 @@ type processor struct {
 	// componentsMetrics maps components to their ranking via the metric value.
 	componentsMetrics prom.MetricSet
 
+	// groupSeverityCountMetrics exposes the current counts of group_ids by severity.
+	groupSeverityCountMetrics prom.MetricSet
+
 	// interval is the time interval between processing iterations.
 	interval time.Duration
 
@@ -28,16 +31,17 @@ type processor struct {
 	groupsCollection *GroupsCollection
 }
 
-func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, interval time.Duration, promURL string) (*processor, error) {
+func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, groupSeverityCountMetrics prom.MetricSet, interval time.Duration, promURL string) (*processor, error) {
 	promLoader, err := prom.NewLoader(promURL)
 	if err != nil {
 		return nil, err
 	}
 	return &processor{
-		healthMapMetrics:  healthMapMetrics,
-		componentsMetrics: componentsMetrics,
-		interval:          interval,
-		loader:            promLoader,
+		healthMapMetrics:          healthMapMetrics,
+		componentsMetrics:         componentsMetrics,
+		groupSeverityCountMetrics: groupSeverityCountMetrics,
+		interval:                  interval,
+		loader:                    promLoader,
 	}, nil
 }
 
@@ -161,19 +165,70 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 		alerts = p.assignAlertsToGroups(alerts, t)
 	}
 
-	alertsHealthMap := MapAlerts(alerts)
-	alertsHealthMap = dedupHealthMaps(alertsHealthMap)
+	healthMap := MapAlerts(alerts)
+	healthMap = dedupHealthMaps(healthMap)
 
-	metrics := make([]prom.Metric, 0, len(alertsHealthMap))
-	for _, healthMap := range alertsHealthMap {
-		metrics = append(metrics, prom.Metric{
+	healthMapMetrics := make([]prom.Metric, 0, len(healthMap))
+	for _, healthMap := range healthMap {
+		healthMapMetrics = append(healthMapMetrics, prom.Metric{
 			Labels: healthMap.Labels(),
 			Value:  float64(healthMap.Health),
 		})
 	}
-	p.healthMapMetrics.Update(metrics)
+	p.healthMapMetrics.Update(healthMapMetrics)
+
+	severityCountsMetrics := p.computeSeverityCountMetrics(healthMap)
+	p.groupSeverityCountMetrics.Update(severityCountsMetrics)
 
 	return nil
+}
+
+func (p *processor) computeSeverityCountMetrics(alertsHealthMap []ComponentHealthMap) []prom.Metric {
+	severityCount := countSeverities(alertsHealthMap)
+
+	metrics := make([]prom.Metric, 0, len(severityCount))
+	for severity, count := range severityCount {
+		metrics = append(metrics, prom.Metric{
+			Labels: map[string]string{
+				"severity": severity,
+			},
+			Value: float64(count),
+		})
+	}
+
+	return metrics
+}
+
+func countSeverities(healthMaps []ComponentHealthMap) map[string]int {
+	healthValues := getCurrentMaxHealthValues(healthMaps)
+	severities := convertHealthValuesToSeverities(healthValues)
+
+	count := make(map[string]int)
+	for _, severity := range severities {
+		count[severity]++
+	}
+
+	return count
+}
+
+func getCurrentMaxHealthValues(healthMaps []ComponentHealthMap) map[string]HealthValue {
+	healthValues := make(map[string]HealthValue)
+	for _, alert := range healthMaps {
+		groupID := alert.GroupId
+		if groupID == "" {
+			continue
+		}
+		healthValues[groupID] = max(healthValues[groupID], alert.Health)
+	}
+	return healthValues
+}
+
+func convertHealthValuesToSeverities(healthValues map[string]HealthValue) []string {
+	severities := make([]string, 0, len(healthValues))
+	for _, health := range healthValues {
+		severities = append(severities, health.String())
+	}
+	return severities
 }
 
 func (p *processor) updateComponentsMetrics() {

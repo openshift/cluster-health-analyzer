@@ -4,7 +4,6 @@ package processor
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 )
@@ -32,8 +31,7 @@ func getAlertHealthMap(a prom.Alert) ComponentHealthMap {
 	}
 
 	healthMap.GroupId = a.Labels["group_id"]
-
-	updateHealthValue(a, &healthMap)
+	healthMap.Health = ParseHealthValue(a.Labels["severity"])
 
 	return healthMap
 }
@@ -90,18 +88,4 @@ func workloadMatcher(labels map[string]string) (layer, comp string, keys []strin
 		return "workload", component, keys
 	}
 	return "", "", nil
-}
-
-func updateHealthValue(a prom.Alert, healthMap *ComponentHealthMap) {
-	switch strings.ToLower(a.Labels["severity"]) {
-	case "critical":
-		healthMap.Health = Critical
-	case "warning":
-		healthMap.Health = Warning
-	case "info":
-		healthMap.Health = Healthy
-	default:
-		// We don't recognize the severity, so we'll default to warning
-		healthMap.Health = Warning
-	}
 }
