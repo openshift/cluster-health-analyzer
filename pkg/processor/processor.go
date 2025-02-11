@@ -218,8 +218,7 @@ func getCurrentMaxHealthValues(healthMaps []ComponentHealthMap) map[string]Healt
 		if groupID == "" {
 			continue
 		}
-		health := alert.Health
-		healthValues[groupID] = max(healthValues[groupID], health)
+		healthValues[groupID] = max(healthValues[groupID], alert.Health)
 	}
 	return healthValues
 }
