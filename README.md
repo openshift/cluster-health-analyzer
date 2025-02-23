@@ -4,29 +4,29 @@ An analyzer for OpenShift cluster health data.
 
 ## Overview
 
-The Cluster Health Analyzer process incoming stream of health signal from
-the OpenShift cluster and enriches it to provide better views at the data
-to enhance the troubleshooting experience.
+The Cluster Health Analyzer processes the incoming stream of health signals from the 
+OpenShift cluster and enriches them to provide better views of the data to enhance the 
+troubleshooting experience.
 
 It provides:
 
 - incidents detection: heuristics to group individual alerts together to allow
 better reasoning about the root cause of the issues.
-- components mapping and ranking: opinionated way to assign the alerts to high-level
-components and ranking based on the importance of the components from overall cluster
+- components mapping and ranking: an opinionated way to assign the alerts to high-level
+components and rank them based on the importance of the components from the overall cluster
 health perspective.
 
 ## Install
 
-Login to a cluster using `oc login` command.
+Login to a cluster using `oc login` command:
 
 ```
-oc apply -f manifests/backend -f manifests/frontend
+oc apply -f manifests/backend
 ```
 
 ## Usage
 
-Cluster health analyzer is a backend that exposes the results via Prometheus
+The Cluster Health Analyzer is a backend that exposes the results via Prometheus
 metrics:
 
 ```
@@ -63,9 +63,6 @@ cluster:health:components
 # importance of the component.
 } -> 1
 ```
-
-See https://github.com/openshift/cluster-health-console-prototype of an example
-usage of the data for incidents navigation.
 
 ## Development and testing
 

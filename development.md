@@ -1,12 +1,12 @@
 # Development
 
-This document describes the process for running cluster-health-analyzer locally for development purposes.
+This document describes the process of running the Cluster Health Analyzer locally for development purposes.
 
 ## Running locally
 
-In order to run the code outside of Kubernetes environment:
+To run the code outside of the Kubernetes environment:
 
-1. start port-forwarding of thanos querier from existing OpenShift installation:
+1. Start the port forwarding of the thanos querier from the existing OpenShift installation:
 
 ``` sh
 make proxy
@@ -16,7 +16,7 @@ or
 ./hack/listen-thanos.sh
 ```
 
-2. run the service with disabled auth
+2. Run the service with disabled auth:
 
 ``` sh
 make run
@@ -32,26 +32,26 @@ The metrics should be exposed over https with self-signed certificates:
 curl -k https://localhost:8443/metrics
 ```
 
-When logged into an OpenShift cluster with `$KUBECONFIG` variable pointing
-to the appropriated kubectl configuration, one can run the authenticated version
+If you are logged into an OpenShift cluster with the `$KUBECONFIG` variable pointing
+to the appropriate kubectl configuration, you can run the authenticated version
 of the service with:
 
 ``` sh
 go run ./main.go serve --kubeconfig $KUBECONFIG
 ```
 
-Note that because it will require proper authentication and your local machine 
-does not have client CAs you would no longer be able to retrieve the metrics locally.
+Note that since it requires proper authentication and your local machine 
+does not have client CAs, you will no longer be able to retrieve the metrics locally.
 
 ## Testing
 
-Before sending your changes make sure to run `make precommit` (this will run both `make lint` and `make test`)
-to avoid CI failures for your PR. There are other useful commands such as `make proxy` and `make deploy`, For
+Before sending your changes, make sure to run `make precommit` (this will run both `make lint` and `make test`)
+to avoid CI failures for your PR. There are other useful commands such as `make proxy` and `make deploy`. For
 full list run `make help`.
 
 ## Data simulation
 
-For development purposes, it's useful to have some data filled in Prometheus.
+For development purposes, it's useful to have some data populated in Prometheus.
 
 It's possible to generate sample alerts + corresponding component and incident
 mappings using the following command:
@@ -93,7 +93,7 @@ installation:
 promtool tsdb create-blocks-from openmetrics cluster-health-analyzer-openmetrics.txt
 ```
 
-Finally, one can copy the files to the cluster that's running the health analyzer:
+Finally, you copy the files to the cluster that's running the Health Analyzer:
 
 ``` sh
 for d in data/*; do
@@ -102,4 +102,4 @@ for d in data/*; do
 done
 ```
 
-Once finished, the data should appear in the target cluster.
+Once complete, the data will appear in the target cluster.

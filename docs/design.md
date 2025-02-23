@@ -1,22 +1,21 @@
 # Purpose
 
-The goal of the health analyzer is to augment the underlying signal
+The goal of the Cluster Health Analyzer is to augment the underlying signal
 about the OpenShift cluster health (alerts) and provide additional information to better
-understand the impact on the overall health and relations between different parts
+understand the impact on the overall health and the relationships between different parts
 of the signal.
 
 The feature it provides are:
-- component mapping:  provides opinionated mapping between underlying alerts
+- **component mapping**:  provides opinionated mapping between underlying alerts
 and higher level components and ranking of the components.
-- incident detection: mapping the incoming alerts into a higher-level concept: an incident. 
-The purpose of the incidents to group together alerts that relate to the same underlying
+- **incident detection**: maps the incoming alerts to a higher level concept: an incident. 
+The purpose of incidents is to group alerts that are related to the same underlying 
 issue.
 
 # Architecture
 
-At the core of the Cluster health analyzer is Prometheus as a time-series database.
-It's used to read underlying observability data, as well as expose the analyzer
-results for the user.
+The Cluster Health Analyzer uses Prometheus as a time-series database, to read the underlying 
+observability data and present the analysis to the user.
 
 ```mermaid
 C4Container
@@ -48,7 +47,7 @@ C4Container
 
 # Data model
 
-The results of the analyzer are provided though a set of metrics:
+The results of the analyzer are provided through a set of metrics:
 
 ## cluster:health:components
 
@@ -61,15 +60,15 @@ cluster:health:components{component="cert-manager", layer="core"}   55
 
 The main purposes are:
 
-- **Ranking of the components**: The value of the metric provides the level of
-importance of the component from the overall cluster health perspective. The
+- **Ranking of the components**: The value of the metric indicates the level of
+importance of the component from the perspective of overall cluster health. The
 lower the number, the more the important the component is.
 
 - **List of available components [FUTURE]**: In certain views, we would like to
-be able to include healthy components as well.  It's not implemented right now,
-but in the future, we could limit the list of components only to those
-applicable for particular cluster (right now, the analyzer exposes all the
-components the analyzer is aware of, even the ones not relevant to the cluster.)
+be able to include healthy components as well. It's not implemented yet,
+but in the future, we could limit the list of components to only those
+that are relevant for a particular cluster (currently the analyzer exposes all the
+components the analyzer is aware of, even thise that are not relevant for the cluster).
 
 The anatomy:
 
@@ -84,26 +83,25 @@ cluster:health:components{
 } 50 // The ranking of the component. The more important, the lower value.
 ```
 
-### The `layer`` field
+### The `layer` field
 
 The layer can be used for high-level categorization of the components.
 
 Currently we define the following layer values:
 
-- `compute` - related to health of the underlying nodes. Currently,
+- `compute` - related to the health of the underlying nodes. Currently,
 only one component named `compute` is assigned there. In the future,
-each node (both control plane and worker) could be modeled as individual
-components. This however would need a reliable mechanism to extract 
-node name from the alerts metadata.
+each node (both control plane and worker) could be modeled as in individual
+component. However, this would rtequire a reliable mechanism to extract the 
+node name from the alert metadata.
 
-- `core` - mostly components tied to the CVO operators. Those components are
-needed for overal health of the cluster.
+- `core` - mostly components tied to the CVO operators. These components are
+needed for the overall health of the cluster.
 
 - `workload` - components tied to the workloads. This can mean alerts related
 to the workloads directly, but also layered components installed via OLM.
-They differ from the `core` operators as they are not needed for keeping
-of the cluster functional, but rather extend it to provide additional
-functionality.
+They differ from the `core` operators in that they are not required to keep 
+the cluster functioning, but rather extend it to provide additional functionality.
 
 ## cluster:health:components:map
 
@@ -138,22 +136,22 @@ cluster:health:components:map{
 ```
 
 ### The normalized severity value
-In order to unify different indicators for severity of the signal, we map
-the source to the integer values, that are exported as values of the metric.
+To unify different indicators of signal severity, we map the source to the integer values that are exported as values of the metric.
 
-The reason for introducing this values are:
-- normalizing between different values provided in `severity` label: While
-most of the alerts use one of `info`, `warning`, `critical`, in real world
-other values are being used as well.
-- normalizing across different type of signal [FUTURE]: e.g.
+The reasons for introducing these values are:
+
+- normalization between different values provided in the `severity` label: While
+most of the alerts use one of `info`, `warning`, `critical`, in the real world
+other values are also used.
+- normalization across different types of signals [FUTURE]: e.g.
 cluster-operator-conditions don't provide information about severity.
 
 Being able to rely on a single number with a limited set of values makes it
-easier to represent the severity to the user.
+easier to present the severity to the user.
 
 The meaning of the values is:
 - `0` - healthy, mapping to "info" severity.
 - `1` - warning, mapping to "warning" severity. The signal is related to the
-health of the component, but not necessary requires immediate action. This is
-the default values for arbitrary severity values.
+health of the component, but doesn not require immediate action. This is
+the default value for arbitrary severity values.
 - `2` - critical, mapping to "critical" severity.
