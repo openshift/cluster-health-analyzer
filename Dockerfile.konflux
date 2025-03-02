@@ -1,4 +1,4 @@
-FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.22 as builder
+FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.23 as builder
 ARG TARGETARCH
 
 WORKDIR /src
@@ -20,7 +20,7 @@ ENV GOFLAGS=-mod=readonly
 ENV GOEXPERIMENT=strictfipsruntime
 RUN go build -tags strictfipsruntime -o /bin/cluster-health-analyzer
 
-FROM registry.redhat.io/rhel9-2-els/rhel:9.2
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 WORKDIR /
 COPY --from=builder /bin/cluster-health-analyzer /bin/cluster-health-analyzer

@@ -1,4 +1,4 @@
-FROM golang:1.22 as builder
+FROM golang:1.23 as builder
 ARG TARGETARCH
 
 WORKDIR /src
@@ -19,7 +19,7 @@ ENV CGO_ENABLED=1
 ENV GOFLAGS=-mod=readonly
 RUN go build -tags strictfipsruntime -o /bin/cluster-health-analyzer
 
-FROM registry.access.redhat.com/ubi9-minimal:latest
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 WORKDIR /
 COPY --from=builder /bin/cluster-health-analyzer /bin/cluster-health-analyzer
