@@ -20,9 +20,10 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: cluster-health-analyzer
-        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
+        image: "quay.io/tremes/cha-mcp:latest"
         imagePullPolicy: Always
         args:
+          - serve
           - --tls-cert-file=/etc/tls/private/tls.crt
           - --tls-private-key-file=/etc/tls/private/tls.key
         env:
@@ -43,6 +44,25 @@ spec:
         - mountPath: /etc/tls/private
           name: cluster-health-analyzer-tls
           readOnly: true
+      - name: cluster-health-mcp-server
+        image: "quay.io/tremes/cha-mcp:latest"
+        imagePullPolicy: Always
+        args:
+          - mcp
+        env:
+          - name: PROM_URL
+            value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        ports:
+        - containerPort: 8080
+          name: mcp
+        terminationMessagePolicy: FallbackToLogsOnError
       volumes:
       - name: cluster-health-analyzer-tls
         secret:

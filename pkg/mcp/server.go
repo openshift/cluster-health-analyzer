@@ -1,0 +1,41 @@
+package mcp
+
+import (
+	"log/slog"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+// MCPHealthServer is a helper and wrapper type
+// providing basic methods to run the underlying SSE server
+// and to register tools
+type MCPHealthServer struct {
+	mcpServer *server.MCPServer
+	sseServer *server.SSEServer
+	addr      string
+}
+
+// NewMCPSSEServer
+func NewMCPSSEServer(name, version, url string) *MCPHealthServer {
+	mcpServer := server.NewMCPServer(name, version, server.WithToolCapabilities(true))
+	sseServer := server.NewSSEServer(mcpServer, server.WithBaseURL(url))
+
+	return &MCPHealthServer{
+		mcpServer: mcpServer,
+		sseServer: sseServer,
+		addr:      url,
+	}
+}
+
+// Start
+func (m *MCPHealthServer) Start() error {
+	slog.Info("Starting MCP server on ", "address", m.addr)
+	return m.sseServer.Start(m.addr)
+}
+
+// RegisterTool
+func (m *MCPHealthServer) RegisterTool(t mcp.Tool, handler server.ToolHandlerFunc) {
+	m.mcpServer.AddTool(t, handler)
+	slog.Info("Registered tool ", "name", t.Name)
+}
