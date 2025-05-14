@@ -4,7 +4,7 @@ go 1.23.0
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/mark3labs/mcp-go v0.26.0
+	github.com/mark3labs/mcp-go v0.32.0
 	github.com/openshift/api v0.0.0-20240830142653-85dc560939ef
 	github.com/openshift/library-go v0.0.0-20240830130947-d9523164b328
 	github.com/prometheus/client_golang v1.19.1

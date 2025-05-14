@@ -1,11 +1,17 @@
 package mcp
 
 import (
+	"context"
 	"log/slog"
+	"net/http"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+type authHeader string
+
+const authHeaderStr authHeader = "kubernetes-authorization"
 
 // MCPHealthServer is a helper and wrapper type
 // providing basic methods to run the underlying SSE server
@@ -19,7 +25,7 @@ type MCPHealthServer struct {
 // NewMCPSSEServer
 func NewMCPSSEServer(name, version, url string) *MCPHealthServer {
 	mcpServer := server.NewMCPServer(name, version, server.WithToolCapabilities(true))
-	sseServer := server.NewSSEServer(mcpServer, server.WithBaseURL(url))
+	sseServer := server.NewSSEServer(mcpServer, server.WithBaseURL(url), server.WithSSEContextFunc(authFromRequest))
 
 	return &MCPHealthServer{
 		mcpServer: mcpServer,
@@ -38,4 +44,9 @@ func (m *MCPHealthServer) Start() error {
 func (m *MCPHealthServer) RegisterTool(t mcp.Tool, handler server.ToolHandlerFunc) {
 	m.mcpServer.AddTool(t, handler)
 	slog.Info("Registered tool ", "name", t.Name)
+}
+
+func authFromRequest(ctx context.Context, r *http.Request) context.Context {
+	token := r.Header.Get(string(authHeaderStr))
+	return context.WithValue(ctx, authHeaderStr, token)
 }

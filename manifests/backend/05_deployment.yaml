@@ -20,7 +20,7 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: cluster-health-analyzer
-        image: "quay.io/tremes/cha-mcp:latest"
+        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
         imagePullPolicy: Always
         args:
           - serve
@@ -45,7 +45,7 @@ spec:
           name: cluster-health-analyzer-tls
           readOnly: true
       - name: cluster-health-mcp-server
-        image: "quay.io/tremes/cha-mcp:latest"
+        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
         imagePullPolicy: Always
         args:
           - mcp
@@ -60,7 +60,7 @@ spec:
           seccompProfile:
             type: RuntimeDefault
         ports:
-        - containerPort: 8080
+        - containerPort: 8085
           name: mcp
         terminationMessagePolicy: FallbackToLogsOnError
       volumes:
