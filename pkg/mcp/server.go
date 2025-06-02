@@ -17,27 +17,28 @@ const authHeaderStr authHeader = "kubernetes-authorization"
 // providing basic methods to run the underlying SSE server
 // and to register tools
 type MCPHealthServer struct {
-	mcpServer *server.MCPServer
-	sseServer *server.SSEServer
-	addr      string
+	mcpServer  *server.MCPServer
+	httpServer *server.StreamableHTTPServer
+	addr       string
 }
 
 // NewMCPSSEServer
 func NewMCPSSEServer(name, version, url string) *MCPHealthServer {
 	mcpServer := server.NewMCPServer(name, version, server.WithToolCapabilities(true))
-	sseServer := server.NewSSEServer(mcpServer, server.WithBaseURL(url), server.WithSSEContextFunc(authFromRequest))
+	streamableServer := server.NewStreamableHTTPServer(mcpServer,
+		server.WithHTTPContextFunc(authFromRequest))
 
 	return &MCPHealthServer{
-		mcpServer: mcpServer,
-		sseServer: sseServer,
-		addr:      url,
+		mcpServer:  mcpServer,
+		httpServer: streamableServer,
+		addr:       url,
 	}
 }
 
 // Start
 func (m *MCPHealthServer) Start() error {
 	slog.Info("Starting MCP server on ", "address", m.addr)
-	return m.sseServer.Start(m.addr)
+	return m.httpServer.Start(m.addr)
 }
 
 // RegisterTool

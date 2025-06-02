@@ -14,6 +14,7 @@ import (
 
 // IncidentsTool create a new MCP tool for the incidents
 func IncidentsTool() mcp.Tool {
+	readonly := true
 	return mcp.Tool{
 		Name: "get_incidents",
 		Description: `List the current firing incidents in the cluster. 
@@ -21,7 +22,7 @@ func IncidentsTool() mcp.Tool {
 		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
 		Annotations: mcp.ToolAnnotation{
 			Title:        "Provides information about Incidents in the cluster",
-			ReadOnlyHint: true,
+			ReadOnlyHint: &readonly,
 		},
 		InputSchema: mcp.ToolInputSchema{
 			Type:       "object",
