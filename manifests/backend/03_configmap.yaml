@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: 'components-config'
+  namespace: openshift-cluster-health-analyzer
+data: 
+  components.yaml: |
+    components:
+    - name: control-plane
+      children:
+      - name: nodes
+        objects:
+        - resource: nodes
+          selectors:
+          - matchLabels:
+              node-role.kubernetes.io/control-plane: []
+      - name: capacity
+        children:
+        - name: cpu
+          alerts:
+            selectors:
+            - matchLabels:
+                alertname: ["KubeCPUOvercommit","HighOverallControlPlaneCPU"]
+        - name: memory
+          alerts:
+            selectors:
+            - matchLabels:
+                alertname: ["HighOverallControlPlaneMemory"]
+      - name: operators
+        children:
+        - name: etcd
+          alerts:
+            selectors:
+            - matchLabels:
+                namespace: ["openshift-etcd","openshift-etcd-operator"]
+          objects:
+          - group: config.openshift.io
+            resource: clusteroperators
+            name: etcd
+    - name: addons
+      children:
+      - name: kubevirt
+        alerts:
+          selectors:
+          - matchLabels:
+              kubernetes_operator_part_of: ["kubevirt"]
+          - matchLabels:
+              namespace: ["openshift-cnv"]
+        objects:
+        - group: kubevirt.io
+          resource: kubevirts
+binaryData: {}
+immutable: false

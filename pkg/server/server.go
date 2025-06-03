@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/componentshealth"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 )
@@ -34,6 +35,20 @@ var (
 		"cluster:health:group_severity:count",
 		"Current counts of group_ids by severity.",
 	)
+
+	componentHealthAlerts = prom.NewMetricSet(
+		"component_health_alert",
+		"Health status of a component based on alerts",
+	)
+
+	componentHealthObjects = prom.NewMetricSet(
+		"component_health_object",
+		"Health status of a component based on Kubernetes objects",
+	)
+	componentsHealth = prom.NewMetricSet(
+		"component_health",
+		"Health status of a component based on the child objects",
+	)
 )
 
 // Server is the interface for serving the metrics.
@@ -56,21 +71,33 @@ func StartServer(interval time.Duration, prometheusURL string, server Server) {
 		return
 	}
 
+	componentsProc, err := componentshealth.NewHealthProcessor(interval, componentHealthAlerts, componentHealthObjects, componentsHealth)
+	if err != nil {
+		slog.Info("Failed to create component procesor, terminating", "err", err)
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	componentsProc.Start(ctx)
+
 	end := time.Now()
 	start := end.Add(-1 * historyLookback)
 	step := time.Minute
-	err = processor.InitGroupsCollection(context.Background(), start, end, step)
+	err = processor.InitGroupsCollection(ctx, start, end, step)
 	if err != nil {
 		slog.Error("Failed to initialize groups collection, terminating", "err", err)
 		return
 	}
 
-	processor.Start(context.Background())
+	processor.Start(ctx)
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(healthMapMetrics)
 	reg.MustRegister(componentsMetrics)
 	reg.MustRegister(groupSeverityCountMetrics)
+	reg.MustRegister(componentHealthAlerts)
+	reg.MustRegister(componentHealthObjects)
+	reg.MustRegister(componentsHealth)
 
 	slog.Info("Serving metrics")
 

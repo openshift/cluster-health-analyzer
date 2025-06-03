@@ -9,7 +9,7 @@ import (
 	"github.com/openshift/library-go/pkg/config/configdefaults"
 	"github.com/openshift/library-go/pkg/config/serving"
 	genericapiserver "k8s.io/apiserver/pkg/server"
-	utilversion "k8s.io/apiserver/pkg/util/version"
+	utilversion "k8s.io/apiserver/pkg/util/compatibility"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -94,7 +94,7 @@ func buildServerConfig(o options) (*genericapiserver.Config, error) {
 	}
 
 	// Set the effective version to avoid panics in the API server.
-	serverConfig.EffectiveVersion = utilversion.DefaultKubeEffectiveVersion()
+	serverConfig.EffectiveVersion = utilversion.DefaultBuildEffectiveVersion()
 
 	// We will be serving out own `/metrics` endpoint.
 	serverConfig.EnableMetrics = false
