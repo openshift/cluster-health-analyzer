@@ -25,4 +25,4 @@ WORKDIR /
 COPY --from=builder /bin/cluster-health-analyzer /bin/cluster-health-analyzer
 USER 65532:65532
 
-ENTRYPOINT ["/bin/cluster-health-analyzer", "serve"]
+ENTRYPOINT ["/bin/cluster-health-analyzer"]

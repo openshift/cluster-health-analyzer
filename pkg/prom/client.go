@@ -1,0 +1,72 @@
+package prom
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/prometheus/client_golang/api"
+	prom_config "github.com/prometheus/common/config"
+)
+
+func NewPrometheusClient(prometheusURL string) (api.Client, error) {
+	return NewPrometheusClientWithToken(prometheusURL, "")
+}
+
+func NewPrometheusClientWithToken(prometheusURL string, token string) (api.Client, error) {
+	if !regexp.MustCompile(`^(http|https)://`).MatchString(prometheusURL) {
+		return nil, errors.New("invalid URL: must start with https:// or http://")
+	}
+
+	api_config := api.Config{
+		Address: prometheusURL,
+	}
+
+	use_tls := strings.HasPrefix(prometheusURL, "https://")
+	if use_tls {
+		if token == "" {
+			tokenBytes, err := readTokenFromFile()
+			if err != nil {
+				slog.Error("Failed to read the service account token", "err", err)
+				return nil, err
+			}
+			token = string(tokenBytes)
+		}
+
+		certs, err := createCertPool()
+		if err != nil {
+			return nil, err
+		}
+
+		defaultRt := api.DefaultRoundTripper.(*http.Transport)
+		defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
+
+		api_config.RoundTripper = prom_config.NewAuthorizationCredentialsRoundTripper(
+			"Bearer", prom_config.NewInlineSecret(token), defaultRt)
+	} else {
+		slog.Warn("Connecting to Prometheus without TLS")
+	}
+
+	return api.NewClient(api_config)
+}
+
+func createCertPool() (*x509.CertPool, error) {
+	certs := x509.NewCertPool()
+
+	pemData, err := os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`)
+	if err != nil {
+		slog.Error("Failed to read the CA certificate", "err", err)
+		return nil, err
+	}
+	certs.AppendCertsFromPEM(pemData)
+	return certs, nil
+}
+
+func readTokenFromFile() ([]byte, error) {
+	return os.ReadFile(`/var/run/secrets/kubernetes.io/serviceaccount/token`)
+}
