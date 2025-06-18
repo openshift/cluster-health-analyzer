@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -48,6 +49,11 @@ func (m *MCPHealthServer) RegisterTool(t mcp.Tool, handler server.ToolHandlerFun
 }
 
 func authFromRequest(ctx context.Context, r *http.Request) context.Context {
-	token := r.Header.Get(string(authHeaderStr))
+	authHeaderValue := r.Header.Get(string(authHeaderStr))
+	token, found := strings.CutPrefix(authHeaderValue, "Bearer ")
+	if !found {
+		slog.Error("Failed to parse kubernetes-authorization header. Prefix Bearer not found.")
+		return ctx
+	}
 	return context.WithValue(ctx, authHeaderStr, token)
 }
