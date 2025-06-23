@@ -23,7 +23,7 @@ help:
 ## lint> lint using golangci-lint
 .PHONY: lint
 lint: $(GOLANGCI_LINT)
-	$(GOLANGCI_LINT) run
+	$(GOLANGCI_LINT) run --timeout 5m
 
 $(GOLANGCI_LINT):
 	./hack/install-golangci-lint.sh
