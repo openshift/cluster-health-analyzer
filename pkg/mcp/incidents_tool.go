@@ -95,7 +95,7 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 		alertSeverity := v.Metric["src_severity"]
 		alertName := v.Metric["src_alertname"]
 		if alertSeverity == "none" || alertSeverity == "info" {
-			slog.Debug("Skipping low severity ", "alert", alertName, "secverity", alertSeverity)
+			slog.Debug("Skipping low severity ", "alert", alertName, "severity", alertSeverity)
 			continue
 		}
 		healthyVal := processor.HealthValue(v.Value)
