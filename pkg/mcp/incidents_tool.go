@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -105,14 +107,18 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 		namespace := v.Metric["src_namespace"]
 
 		if existingInc, ok := incidents[groupId]; ok {
-			existingInc.AffectedComponents = append(existingInc.AffectedComponents, component)
+			existingInc.ComponentsSet[component] = struct{}{}
+			existingInc.AffectedComponents = slices.Collect(maps.Keys(existingInc.ComponentsSet))
 			existingInc.Alerts = append(existingInc.Alerts, model.Metric{"alertname": alertName, "namespace": namespace})
 			incidents[existingInc.GroupId] = existingInc
 		} else {
 			incidents[groupId] = Incident{
-				GroupId:            string(groupId),
-				Severity:           severity,
-				Status:             "firing",
+				GroupId:  string(groupId),
+				Severity: severity,
+				Status:   "firing",
+				ComponentsSet: map[string]struct{}{
+					component: {},
+				},
 				AffectedComponents: []string{component},
 				Alerts:             []model.Metric{{"alertname": alertName, "namespace": namespace}},
 			}

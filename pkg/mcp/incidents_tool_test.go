@@ -47,9 +47,47 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Severity:           processor.Healthy.String(),
 					Status:             "firing",
 					AffectedComponents: []string{"monitoring", "console"},
+					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
 					Alerts: []model.Metric{
 						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
 						{"alertname": "Alert2", "namespace": "openshift-console"}},
+				},
+			},
+		},
+		{
+			name: "Two alerts with same group_id and same component are one incident",
+			testInput: model.Vector{
+				&model.Sample{
+					Metric: model.Metric{
+						"src_alertname": "Alert1",
+						"group_id":      "1",
+						"src_severity":  "warning",
+						"component":     "monitoring",
+						"src_namespace": "openshift-monitoring",
+					},
+					Value: 0,
+				},
+				&model.Sample{
+					Metric: model.Metric{
+						"src_alertname": "Alert2",
+						"group_id":      "1",
+						"src_severity":  "warning",
+						"component":     "monitoring",
+						"src_namespace": "openshift-monitoring",
+					},
+					Value: 0,
+				},
+			},
+			expectedIncidents: map[string]Incident{
+				"1": {
+					GroupId:            "1",
+					Severity:           processor.Healthy.String(),
+					Status:             "firing",
+					AffectedComponents: []string{"monitoring"},
+					ComponentsSet:      map[string]struct{}{"monitoring": {}},
+					Alerts: []model.Metric{
+						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
+						{"alertname": "Alert2", "namespace": "openshift-monitoring"}},
 				},
 			},
 		},
@@ -102,6 +140,7 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Severity:           "critical",
 					Status:             "firing",
 					AffectedComponents: []string{"monitoring", "console"},
+					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
 					Alerts: []model.Metric{
 						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
 						{"alertname": "Alert2", "namespace": "openshift-console"}},
@@ -111,6 +150,7 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Severity:           "warning",
 					Status:             "firing",
 					AffectedComponents: []string{"console"},
+					ComponentsSet:      map[string]struct{}{"console": {}},
 					Alerts:             []model.Metric{{"alertname": "Alert4", "namespace": "openshift-console"}},
 				},
 			},

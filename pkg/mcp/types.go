@@ -19,7 +19,8 @@ type Incident struct {
 	EndTime   string `json:"end_time"`
 
 	// TODO
-	URL                string         `json:"-"`
-	Alerts             []model.Metric `json:"alerts"`
-	AffectedComponents []string       `json:"affected_components"`
+	URL                string              `json:"-"`
+	Alerts             []model.Metric      `json:"alerts"`
+	AffectedComponents []string            `json:"affected_components"`
+	ComponentsSet      map[string]struct{} `json:"-"`
 }
