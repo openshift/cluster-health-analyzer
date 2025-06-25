@@ -47,14 +47,14 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	}
 
 	promURL := os.Getenv("PROM_URL")
-	promCli, err := prom.NewPrometheusClientWithToken(promURL, token)
+	promClient, err := prom.NewPrometheusClientWithToken(promURL, token)
 	if err != nil {
 		slog.Error("Failed to initialize Prometheus client", "error", err)
 		return nil, err
 	}
 
-	promAPI := v1.NewAPI(promCli)
-	val, warning, err := promAPI.Query(ctx, "cluster:health:components:map{}", time.Now())
+	promAPI := v1.NewAPI(promClient)
+	val, warning, err := promAPI.Query(ctx, fmt.Sprintf("%s{}", processor.ClusterHealthComponentsMap), time.Now())
 	if err != nil {
 		slog.Error("Recieved error response from Prometheus", "error", err)
 		return nil, err

@@ -15,7 +15,13 @@ import (
 )
 
 func NewPrometheusClient(prometheusURL string) (api.Client, error) {
-	return NewPrometheusClientWithToken(prometheusURL, "")
+	tokenBytes, err := readTokenFromFile()
+	if err != nil {
+		slog.Error("Failed to read the service account token", "err", err)
+		return nil, err
+	}
+	token := string(tokenBytes)
+	return NewPrometheusClientWithToken(prometheusURL, token)
 }
 
 func NewPrometheusClientWithToken(prometheusURL string, token string) (api.Client, error) {
@@ -29,15 +35,6 @@ func NewPrometheusClientWithToken(prometheusURL string, token string) (api.Clien
 
 	use_tls := strings.HasPrefix(prometheusURL, "https://")
 	if use_tls {
-		if token == "" {
-			tokenBytes, err := readTokenFromFile()
-			if err != nil {
-				slog.Error("Failed to read the service account token", "err", err)
-				return nil, err
-			}
-			token = string(tokenBytes)
-		}
-
 		certs, err := createCertPool()
 		if err != nil {
 			return nil, err

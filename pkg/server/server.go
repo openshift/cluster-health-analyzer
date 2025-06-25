@@ -23,7 +23,7 @@ const (
 
 var (
 	healthMapMetrics = prom.NewMetricSet(
-		"cluster:health:components:map",
+		processor.ClusterHealthComponentsMap,
 		"Cluster health components mapping.",
 	)
 	componentsMetrics = prom.NewMetricSet(
