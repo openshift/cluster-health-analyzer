@@ -46,7 +46,7 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					GroupId:            "1",
 					Severity:           processor.Healthy.String(),
 					Status:             "firing",
-					AffectedComponents: []string{"monitoring", "console"},
+					AffectedComponents: []string{"console", "monitoring"},
 					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
 					Alerts: []model.Metric{
 						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
@@ -139,7 +139,7 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					GroupId:            "1",
 					Severity:           "critical",
 					Status:             "firing",
-					AffectedComponents: []string{"monitoring", "console"},
+					AffectedComponents: []string{"console", "monitoring"},
 					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
 					Alerts: []model.Metric{
 						{"alertname": "Alert1", "namespace": "openshift-monitoring"},

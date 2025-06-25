@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -109,6 +110,7 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 		if existingInc, ok := incidents[groupId]; ok {
 			existingInc.ComponentsSet[component] = struct{}{}
 			existingInc.AffectedComponents = slices.Collect(maps.Keys(existingInc.ComponentsSet))
+			sort.Strings(existingInc.AffectedComponents)
 			existingInc.Alerts = append(existingInc.Alerts, model.Metric{"alertname": alertName, "namespace": namespace})
 			incidents[existingInc.GroupId] = existingInc
 		} else {
