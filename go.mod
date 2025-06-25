@@ -4,6 +4,7 @@ go 1.23.0
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/mark3labs/mcp-go v0.32.0
 	github.com/openshift/api v0.0.0-20240830142653-85dc560939ef
 	github.com/openshift/library-go v0.0.0-20240830130947-d9523164b328
 	github.com/prometheus/client_golang v1.19.1
@@ -59,8 +60,10 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/spf13/cast v1.7.1 // indirect
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.14 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.14 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.14 // indirect

@@ -11,6 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
+const ClusterHealthComponentsMap = "cluster:health:components:map"
+
 // processor is the component responsible for continuously loading alerts from source
 // and coordinates updating the exported metrics.
 type processor struct {
@@ -70,7 +72,7 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	p.groupsCollection.processHistoricalAlerts(alertsRange)
 
 	slog.Info("Loading health map range")
-	healthMapRV, err := p.loader.LoadVectorRange(ctx, "cluster:health:components:map", start, end, step)
+	healthMapRV, err := p.loader.LoadVectorRange(ctx, ClusterHealthComponentsMap, start, end, step)
 	if err != nil {
 		return err
 	}
