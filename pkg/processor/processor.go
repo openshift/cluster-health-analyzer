@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -136,7 +137,7 @@ func dedupHealthMaps(healthMaps []ComponentHealthMap) []ComponentHealthMap {
 	return deduped
 }
 
-func (p *processor) assignAlertsToGroups(alerts []prom.Alert, t time.Time) []prom.Alert {
+func (p *processor) assignAlertsToGroups(alerts []model.LabelSet, t time.Time) []model.LabelSet {
 	processedAlerts := p.groupsCollection.ProcessAlertsBatch(alerts, t)
 
 	// Prune the groups collection to remove old groups.
@@ -191,8 +192,8 @@ func (p *processor) computeSeverityCountMetrics(alertsHealthMap []ComponentHealt
 	metrics := make([]prom.Metric, 0, len(severityCount))
 	for severity, count := range severityCount {
 		metrics = append(metrics, prom.Metric{
-			Labels: map[string]string{
-				"severity": severity,
+			Labels: model.LabelSet{
+				"severity": model.LabelValue(severity),
 			},
 			Value: float64(count),
 		})
@@ -239,9 +240,9 @@ func (p *processor) updateComponentsMetrics() {
 	metrics := make([]prom.Metric, 0)
 	for _, r := range ranks {
 		metrics = append(metrics, prom.Metric{
-			Labels: map[string]string{
-				"layer":     r.Layer,
-				"component": r.Component,
+			Labels: model.LabelSet{
+				"layer":     model.LabelValue(r.Layer),
+				"component": model.LabelValue(r.Component),
 			},
 			Value: float64(r.Rank),
 		})

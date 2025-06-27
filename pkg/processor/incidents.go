@@ -6,17 +6,17 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 )
 
 type Interval struct {
-	Metric prom.PromMetric
+	Metric model.LabelSet
 	Start  model.Time
 	End    model.Time
 }
@@ -50,9 +50,9 @@ func (c Change) String() string {
 
 type ChangeSet []Change
 
-var noMatchAlerts = []labelsSubsetMatcher{
-	{Labels: map[string]string{"alertname": "Watchdog", "namespace": "openshift-monitoring"}},
-	{Labels: map[string]string{"alertname": "AlertmanagerReceiversNotConfigured", "namespace": "openshift-monitoring"}},
+var noMatchAlerts = []common.LabelsSubsetMatcher{
+	{Labels: model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}},
+	{Labels: model.LabelSet{"alertname": "AlertmanagerReceiversNotConfigured", "namespace": "openshift-monitoring"}},
 }
 
 func MetricsIntervals(rangeVector prom.RangeVector) []Interval {
@@ -144,7 +144,7 @@ type GroupMatcher struct {
 	End         model.Time
 
 	Distance float64
-	Matchers []labelsSubsetMatcher
+	Matchers []common.LabelsSubsetMatcher
 }
 
 func (g GroupMatcher) String() string {
@@ -173,7 +173,7 @@ func (g GroupMatcher) isSubsetOf(other *GroupMatcher) bool {
 	return true
 }
 
-func (g *GroupMatcher) expandMatchers(matchers []labelsSubsetMatcher) {
+func (g *GroupMatcher) expandMatchers(matchers []common.LabelsSubsetMatcher) {
 	for _, m := range matchers {
 		// Check if the matcher is already in the group.
 		// If not, add it.
@@ -197,53 +197,53 @@ type match struct {
 	TimeDist     time.Duration
 }
 
-func newGroupMatcherSubset(labels map[string]string, keys []string, distance float64) *GroupMatcher {
+func newGroupMatcherSubset(labels model.LabelSet, keys []model.LabelName, distance float64) *GroupMatcher {
 	labels = getMapSubset(labels, keys...)
 
 	return &GroupMatcher{
-		Matchers: []labelsSubsetMatcher{{Labels: labels}},
+		Matchers: []common.LabelsSubsetMatcher{{Labels: labels}},
 		Distance: distance,
 	}
 }
 
-func newGroupMatcherExact(labels map[string]string) *GroupMatcher {
+func newGroupMatcherExact(labels model.LabelSet) *GroupMatcher {
 	return &GroupMatcher{
-		Matchers: []labelsSubsetMatcher{{Labels: labels}},
+		Matchers: []common.LabelsSubsetMatcher{{Labels: labels}},
 		Distance: 0,
 	}
 }
 
 func watchdogAlert(i Interval) bool {
-	return i.Metric.MLabels()["alertname"] == "Watchdog" &&
-		i.Metric.MLabels()["namespace"] == "openshift-monitoring"
+	return i.Metric["alertname"] == "Watchdog" &&
+		i.Metric["namespace"] == "openshift-monitoring"
 }
 
-func alertFuzzyLabels(i Interval) map[string]string {
+func alertFuzzyLabels(i Interval) model.LabelSet {
 	for _, m := range noMatchAlerts {
 		// For certain alerts, we don't want to do any fuzzy matching.
-		if match, _ := m.Matches(i.Metric.MLabels()); match {
+		if match, _ := m.Matches(i.Metric); match {
 			return nil
 		}
 	}
 	// TODO: add option for some alerts to match some known pairs, but not others.
 	// E.g. APIRemovedInNextReleaseInUse and APIRemovedInNextEUSReleaseInUse
-	return getMapSubset(i.Metric.MLabels(), "alertname", "namespace")
+	return getMapSubset(i.Metric, "alertname", "namespace")
 }
 
 // alertGroupMatchers returns a list of matchers for the alert.
 // This includes exact matcher with 0 distance, as well as various fuzzy matchers
 // based on the alert labels.
 func alertGroupMatchers(interval Interval) []*GroupMatcher {
-	labels := interval.Metric.MLabels()
+	labels := interval.Metric
 	groups := []*GroupMatcher{
 		newGroupMatcherExact(labels),
 		// Match on main subset of labels - should be still close enough.
-		newGroupMatcherSubset(labels, []string{"namespace", "alertname", "service", "job", "container"}, 1),
+		newGroupMatcherSubset(labels, []model.LabelName{"namespace", "alertname", "service", "job", "container"}, 1),
 	}
 
 	for k, v := range alertFuzzyLabels(interval) {
 		groups = append(groups,
-			newGroupMatcherSubset(map[string]string{k: v}, []string{k}, 2),
+			newGroupMatcherSubset(model.LabelSet{k: v}, []model.LabelName{k}, 2),
 		)
 	}
 	for _, g := range groups {
@@ -283,7 +283,7 @@ func (gc *GroupsCollection) processHistoricalAlerts(alertsRange prom.RangeVector
 	}
 }
 
-func (gc *GroupsCollection) ProcessAlertsBatch(alerts []prom.Alert, timestamp time.Time) []prom.Alert {
+func (gc *GroupsCollection) ProcessAlertsBatch(alerts []model.LabelSet, timestamp time.Time) []model.LabelSet {
 	modelT := model.TimeFromUnixNano(timestamp.UnixNano())
 
 	intervals := make([]Interval, 0, len(alerts))
@@ -297,13 +297,13 @@ func (gc *GroupsCollection) ProcessAlertsBatch(alerts []prom.Alert, timestamp ti
 
 	groupedIntervals := gc.ProcessIntervalsBatch(intervals)
 
-	ret := make([]prom.Alert, 0, len(alerts))
+	ret := make([]model.LabelSet, 0, len(alerts))
 	for _, gi := range groupedIntervals {
-		labels := gi.Metric.MLabels()
+		alert := gi.Metric
 		if gi.GroupMatcher != nil {
-			labels["group_id"] = gi.GroupMatcher.RootGroupID
+			alert["group_id"] = model.LabelValue(gi.GroupMatcher.RootGroupID)
 		}
-		ret = append(ret, prom.Alert{Name: labels["alertname"], Labels: labels})
+		ret = append(ret, alert)
 	}
 	return ret
 }
@@ -498,7 +498,7 @@ func (gc *GroupsCollection) bestMatch(interval Interval) *GroupMatcher {
 
 func (gc *GroupsCollection) matches(interval Interval) []match {
 	var ret []match
-	allLabels := interval.Metric.MLabels()
+	allLabels := interval.Metric
 	fuzzyLabels := alertFuzzyLabels(interval)
 	for _, g := range gc.Groups {
 		var timeDist time.Duration
@@ -545,7 +545,7 @@ func (gc *GroupsCollection) matches(interval Interval) []match {
 /// after the restart of the analyzer.
 
 type previousIncident struct {
-	matcher *labelsSubsetMatcher
+	matcher *common.LabelsSubsetMatcher
 	uuid    string
 	start   model.Time
 	end     model.Time
@@ -582,7 +582,7 @@ func (pim *previousIncidentsMatcher) atTime(t model.Time) []*previousIncident {
 	return ret
 }
 
-func (pim *previousIncidentsMatcher) match(labels map[string]string, time model.Time) *previousIncident {
+func (pim *previousIncidentsMatcher) match(labels model.LabelSet, time model.Time) *previousIncident {
 	candidates := pim.atTime(time)
 
 	for _, c := range candidates {
@@ -595,27 +595,15 @@ func (pim *previousIncidentsMatcher) match(labels map[string]string, time model.
 	return nil
 }
 
-// srcLabels returns a map of labels that are not internal.
-// These labels are used for matching underlying metrics (e.g. alerts).
-func srcLabels(labels map[string]string) map[string]string {
-	ret := make(map[string]string)
-	for k, v := range labels {
-		if strings.HasPrefix(k, SrcLabelPrefix) {
-			ret[k[len(SrcLabelPrefix):]] = v
-		}
-	}
-	return ret
-}
-
 func newPreviousIncidentsMatcher(healthMapRV prom.RangeVector) *previousIncidentsMatcher {
 	componentsMapChanges := MetricsChanges(healthMapRV)
 	prevIncidents := make([]*previousIncident, 0, len(componentsMapChanges))
 	for _, change := range componentsMapChanges {
 		for _, interval := range change.Intervals {
-			labels := interval.Metric.MLabels()
+			labels := interval.Metric
 			prevIncidents = append(prevIncidents, &previousIncident{
-				matcher: &labelsSubsetMatcher{srcLabels(labels)},
-				uuid:    labels["group_id"],
+				matcher: &common.LabelsSubsetMatcher{Labels: common.SrcLabels(model.Metric(labels))},
+				uuid:    string(labels["group_id"]),
 				start:   interval.Start,
 				end:     interval.End,
 			})

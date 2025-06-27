@@ -13,7 +13,7 @@ import (
 // It can be used to generate various data structures for testing purposes, such
 // as [prom.Range] or [processor.Interval].
 type RelativeInterval struct {
-	Labels map[string]string
+	Labels model.LabelSet
 	Start  int // relative start in minutes
 	End    int // relative end in minutes
 }
@@ -29,9 +29,7 @@ func RelativeIntervalToRange(ri RelativeInterval, origin model.Time, step time.D
 			Value:     1})
 	}
 	return prom.Range{
-		Metric: prom.LabelSet{
-			Labels: ri.Labels,
-		},
+		Metric:  ri.Labels,
 		Samples: samples,
 		Step:    step,
 	}

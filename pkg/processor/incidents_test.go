@@ -9,7 +9,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 )
 
@@ -25,76 +24,65 @@ func TestGroupsCollectionProcessAlertsBatch(t *testing.T) {
 	// Case 1: An alert arrives without any previous alerts history.
 	//
 	// A new group_id should be assigned to the alert.
-	alerts := []prom.Alert{
-		{Name: "Alert1", Labels: map[string]string{"alertname": "Alert1"}},
-	}
+	alerts := []model.LabelSet{{"alertname": "Alert1"}}
 	case1 := gc.ProcessAlertsBatch(alerts, start.Add(1*time.Hour+10*time.Minute).Time())
 
-	assert.NotEmpty(t, case1[0].Labels["group_id"])
+	assert.NotEmpty(t, case1[0]["group_id"])
 
 	// Case 2: Alert is within the time range of time-based matcher.
 	//
 	// It should match the group of previous alert.
-	alerts = []prom.Alert{
-		{Name: "Alert2", Labels: map[string]string{"alertname": "Alert2", "namespace": "ns2"}},
-	}
+	alerts = []model.LabelSet{{"alertname": "Alert2", "namespace": "ns2"}}
 	case2 := gc.ProcessAlertsBatch(alerts, start.Add(1*time.Hour+15*time.Minute).Time())
 
-	assert.Equal(t, case1[0].Labels["group_id"], case2[0].Labels["group_id"])
+	assert.Equal(t, case1[0]["group_id"], case2[0]["group_id"])
 
 	// Case 3: 2 alerts outside of the time range of time-based matcher,
 	//
 	// They should not match the original group, but they should both become part
 	// of a new group.
-	alerts = []prom.Alert{
-		{Name: "Alert3.1", Labels: map[string]string{"alertname": "Alert3.1"}},
-		{Name: "Alert3.2", Labels: map[string]string{"alertname": "Alert3.2"}},
+	alerts = []model.LabelSet{
+		{"alertname": "Alert3.1"},
+		{"alertname": "Alert3.2"},
 	}
 	case3 := gc.ProcessAlertsBatch(alerts, start.Add(3*time.Hour).Time())
-	assert.NotEqual(t, "time-matcher", case3[0].Labels["group_id"])
-	assert.Equal(t, case3[0].Labels["group_id"], case3[1].Labels["group_id"])
+	assert.NotEqual(t, "time-matcher", case3[0]["group_id"])
+	assert.Equal(t, case3[0]["group_id"], case3[1]["group_id"])
 
 	// Case 4: Alert with same alertname as one from case 2 fires within
 	// [processor.fuzzyMatchTimeDelta] time range.
 	//
 	// It should match the group created in case 3.
-	alerts = []prom.Alert{
-		{Name: "Alert3.1", Labels: map[string]string{"alertname": "Alert3.1"}},
-	}
+	alerts = []model.LabelSet{{"alertname": "Alert3.1"}}
 	case4 := gc.ProcessAlertsBatch(alerts, start.Add(7*time.Hour).Time())
-	assert.Equal(t, case3[0].Labels["group_id"], case4[0].Labels["group_id"])
+	assert.Equal(t, case3[0]["group_id"], case4[0]["group_id"])
 
 	// Case 5: Alert from the same namespace firing within [processor.fuzzyMatchTimeDelta]
 	//
 	// It should match with the last active group from the same namespace.
-	alerts = []prom.Alert{
-		{Name: "Alert5", Labels: map[string]string{
-			"alertname": "Alert5", "namespace": "ns2"}},
+	alerts = []model.LabelSet{
+		{"alertname": "Alert5", "namespace": "ns2"},
 	}
 	case5 := gc.ProcessAlertsBatch(alerts, start.Add(7*time.Hour).Time())
-	assert.Equal(t, case2[0].Labels["group_id"], case5[0].Labels["group_id"])
+	assert.Equal(t, case2[0]["group_id"], case5[0]["group_id"])
 
 	// Case 6: A watchdog is part of the new group.
 	//
 	// It's a sign that the alerts in the group might not be related
 	// to each other, even as they appeared at the same time. Only alerts from the
 	// same namespace should be grouped together.
-	alerts = []prom.Alert{
-		{Name: "Watchdog", Labels: map[string]string{
-			"alertname": "Watchdog", "namespace": "openshift-monitoring"}},
-		{Name: "Alert6.1", Labels: map[string]string{
-			"alertname": "Alert6.1", "namespace": "ns6.1"}},
-		{Name: "Alert6.2", Labels: map[string]string{
-			"alertname": "Alert6.2", "namespace": "ns6.1"}},
-		{Name: "Alert6.3", Labels: map[string]string{
-			"alertname": "Alert6.3", "namespace": "ns6.3"}},
+	alerts = []model.LabelSet{
+		{"alertname": "Watchdog", "namespace": "openshift-monitoring"},
+		{"alertname": "Alert6.1", "namespace": "ns6.1"},
+		{"alertname": "Alert6.2", "namespace": "ns6.1"},
+		{"alertname": "Alert6.3", "namespace": "ns6.3"},
 	}
 	case6 := gc.ProcessAlertsBatch(alerts, start.Add(10*time.Hour).Time())
-	assert.NotEqual(t, case6[0].Labels["group_id"], case6[1].Labels["group_id"])
+	assert.NotEqual(t, case6[0]["group_id"], case6[1]["group_id"])
 	// 1st and 2nd alert were from the same namespace, so they should be in the same group.
-	assert.Equal(t, case6[1].Labels["group_id"], case6[2].Labels["group_id"])
+	assert.Equal(t, case6[1]["group_id"], case6[2]["group_id"])
 	// 3rd alert was from a different namespace, so it should be in a different group.
-	assert.NotEqual(t, case6[1].Labels["group_id"], case6[3].Labels["group_id"])
+	assert.NotEqual(t, case6[1]["group_id"], case6[3]["group_id"])
 }
 
 // TestGroupsCollectionPruneGroups tests pruning of old groups.
@@ -155,7 +143,7 @@ func TestGroupsCollectionPruneGroups(t *testing.T) {
 
 var alertsIntervals = []utils.RelativeInterval{
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "Watchdog",
 			"namespace": "openshift-monitoring",
 			"severity":  "none",
@@ -164,7 +152,7 @@ var alertsIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "AlertmanagerReceiversNotConfigured",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -173,7 +161,7 @@ var alertsIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterNotUpgradeable",
 			"namespace": "openshift-cluster-version",
 			"severity":  "info",
@@ -182,7 +170,7 @@ var alertsIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "TargetDown",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -191,7 +179,7 @@ var alertsIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeNodeNotReady",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -234,7 +222,7 @@ func TestGroupsCollectionProcessHistoricalAlerts(t *testing.T) {
 			// possible to have multiple label matchers in a single group
 			// though the act of fuzzy-matching.
 			for _, labelMatcher := range groupMatcher.Matchers {
-				alert := labelMatcher.Labels["alertname"]
+				alert := string(labelMatcher.Labels["alertname"])
 				if alert != "" && !slices.Contains(alerts, alert) {
 					alerts = append(alerts, alert)
 				}
@@ -253,7 +241,7 @@ func TestGroupsCollectionProcessHistoricalAlerts(t *testing.T) {
 
 var mappingIntervals = []utils.RelativeInterval{
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"group_id":      "group1",
 			"src_alertname": "AlertmanagerReceiversNotConfigured",
 			"src_namespace": "openshift-monitoring",
@@ -263,7 +251,7 @@ var mappingIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"group_id":      "group2",
 			"src_alertname": "TargetDown",
 			"src_namespace": "openshift-monitoring",
@@ -297,7 +285,7 @@ func TestGroupsCollectionUpdateGroupUUIDs(t *testing.T) {
 	groupedAlerts := make(map[string][]string)
 	for _, g := range gc.Groups {
 		for _, labelMatcher := range g.Matchers {
-			alert := labelMatcher.Labels["alertname"]
+			alert := string(labelMatcher.Labels["alertname"])
 			if alert != "" && !slices.Contains(groupedAlerts[g.RootGroupID], alert) {
 				groupedAlerts[g.RootGroupID] = append(groupedAlerts[g.RootGroupID], alert)
 			}
