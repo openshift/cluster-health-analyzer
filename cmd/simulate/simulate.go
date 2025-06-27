@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
-	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 )
 
@@ -46,7 +45,7 @@ func init() {
 
 var defaultRelativeIntervals = []utils.RelativeInterval{
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "Watchdog",
 			"namespace": "openshift-monitoring",
 			"severity":  "none",
@@ -55,7 +54,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "AlertmanagerReceiversNotConfigured",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -64,7 +63,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterNotUpgradeable",
 			"namespace": "openshift-cluster-version",
 			"severity":  "info",
@@ -73,7 +72,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "TargetDown",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -82,7 +81,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeNodeNotReady",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -93,7 +92,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeNodeUnreachable",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -104,7 +103,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 	},
 	// Simulate the ClusterOperatorDegraded alert to be flapping
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterOperatorDegraded",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
@@ -114,7 +113,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   3050,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterOperatorDegraded",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
@@ -124,7 +123,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   3200,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterOperatorDegraded",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
@@ -134,7 +133,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   3600,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "TargetDown",
 			"namespace": "openshift-machine-config-operator",
 			"severity":  "warning",
@@ -143,7 +142,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterOperatorDown",
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
@@ -153,7 +152,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   3200,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "ClusterOperatorDown",
 			"namespace": "openshift-cluster-version",
 			"severity":  "critical",
@@ -163,7 +162,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeDaemonSetRolloutStuck",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -172,7 +171,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "PodDisruptionBudgetAtLimit",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
@@ -181,7 +180,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "TargetDown",
 			"namespace": "openshift-dns",
 			"severity":  "warning",
@@ -190,7 +189,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-dns",
 			"severity":  "warning",
@@ -199,7 +198,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-ingress-canary",
 			"severity":  "warning",
@@ -208,7 +207,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-network-operator",
 			"severity":  "warning",
@@ -217,7 +216,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 		End:   4000,
 	},
 	{
-		Labels: map[string]string{
+		Labels: model.LabelSet{
 			"alertname": "TargetDown",
 			"namespace": "openshift-network-operator",
 			"severity":  "warning",
@@ -228,7 +227,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 }
 
 func RelativeIntervalToAbsoluteInterval(ri utils.RelativeInterval, origin model.Time) processor.Interval {
-	labels := make(map[string]string)
+	labels := make(model.LabelSet)
 	for k, v := range ri.Labels {
 		labels[k] = v
 	}
@@ -237,7 +236,7 @@ func RelativeIntervalToAbsoluteInterval(ri utils.RelativeInterval, origin model.
 	return processor.Interval{
 		Start:  origin.Add(time.Duration(float64(ri.Start) * float64(time.Minute))),
 		End:    origin.Add(time.Duration(float64(ri.End) * float64(time.Minute))),
-		Metric: prom.LabelSet{Labels: labels},
+		Metric: labels,
 	}
 }
 
@@ -306,15 +305,15 @@ func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 			return nil, err
 		}
 
-		labels := map[string]string{
-			"alertname": fields[2],
-			"namespace": fields[3],
-			"severity":  fields[4],
+		labels := model.LabelSet{
+			"alertname": model.LabelValue(fields[2]),
+			"namespace": model.LabelValue(fields[3]),
+			"severity":  model.LabelValue(fields[4]),
 		}
 
 		// Parse additional labels, if present
 		if fields[5] != "" {
-			var additionalLabels map[string]string
+			var additionalLabels model.LabelSet
 			err := json.Unmarshal([]byte(fields[5]), &additionalLabels)
 			if err != nil {
 				slog.Error("Invalid additional labels JSON", "line", line, "error", err)
@@ -352,7 +351,7 @@ func buildAlertIntervals(scenarioFile string) ([]processor.Interval, error) {
 func fmtInterval(
 	w io.Writer,
 	metricName string,
-	labels map[string]string,
+	labels model.LabelSet,
 	start,
 	end model.Time,
 	step time.Duration,
@@ -433,7 +432,7 @@ func simulate(outputFile, scenarioFile string) {
 	fmt.Fprintln(w, "# HELP ALERTS Alert status")
 	fmt.Fprintln(w, "# TYPE ALERTS gauge")
 	for _, i := range intervals {
-		err := fmtInterval(w, "ALERTS", i.Metric.MLabels(), i.Start, i.End, step, 1)
+		err := fmtInterval(w, "ALERTS", i.Metric, i.Start, i.End, step, 1)
 		must(err)
 	}
 
@@ -442,9 +441,9 @@ func simulate(outputFile, scenarioFile string) {
 	fmt.Fprintln(w, "# TYPE cluster:health:components gauge")
 	ranks := processor.BuildComponentRanks()
 	for _, rank := range ranks {
-		err := fmtInterval(w, "cluster:health:components", map[string]string{
-			"layer":     rank.Layer,
-			"component": rank.Component,
+		err := fmtInterval(w, "cluster:health:components", model.LabelSet{
+			"layer":     model.LabelValue(rank.Layer),
+			"component": model.LabelValue(rank.Component),
 		}, start, end, step, float64(rank.Rank))
 		must(err)
 	}
@@ -462,15 +461,11 @@ func simulate(outputFile, scenarioFile string) {
 	fmt.Fprintln(w, "# TYPE cluster:health:components:map gauge")
 
 	for _, gi := range groupedIntervalsSet {
-		labels := gi.Metric.MLabels()
-		labels["group_id"] = gi.GroupMatcher.RootGroupID
-		alert := prom.Alert{
-			Name:   labels["alertname"],
-			Labels: labels,
-		}
+		alert := gi.Metric
+		alert["group_id"] = model.LabelValue(gi.GroupMatcher.RootGroupID)
 
 		// Map alert to component
-		healthMap := processor.MapAlerts([]prom.Alert{alert})[0]
+		healthMap := processor.MapAlerts([]model.LabelSet{alert})[0]
 		err := fmtInterval(w, "cluster:health:components:map", healthMap.Labels(), gi.Start, gi.End, step, float64(healthMap.Health))
 		must(err)
 	}
@@ -493,7 +488,7 @@ func simulate(outputFile, scenarioFile string) {
 			if interval.End.After(end) {
 				end = interval.End
 			}
-			alertname := interval.Interval.Metric.MLabels()["alertname"]
+			alertname := string(interval.Interval.Metric["alertname"])
 			alerts[alertname] = struct{}{}
 		}
 	}

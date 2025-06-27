@@ -29,21 +29,17 @@ func NewLoader(prometheusURL string) (*Loader, error) {
 	}, nil
 }
 
-func (c *loader) LoadAlerts(ctx context.Context, t time.Time) ([]Alert, error) {
+func (c *loader) LoadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
 	result, _, err := c.api.Query(ctx, `ALERTS{alertstate="firing"}`, t)
 	if err != nil {
 		return nil, err
 	}
 	vect := result.(model.Vector)
-	var ret = make([]Alert, len(vect))
+	var ret = make([]model.LabelSet, len(vect))
 	for i, sample := range vect {
-		labels := make(map[string]string, len(sample.Metric))
+		alert := make(model.LabelSet, len(sample.Metric))
 		for k, v := range sample.Metric {
-			labels[string(k)] = string(v)
-		}
-		alert := Alert{
-			Name:   string(sample.Metric["alertname"]),
-			Labels: labels,
+			alert[k] = v
 		}
 		ret[i] = alert
 	}
@@ -63,13 +59,9 @@ func (c *loader) LoadAlertsRange(ctx context.Context, start, end time.Time, step
 	matrix := result.(model.Matrix)
 	ret := make(RangeVector, len(matrix))
 	for i, samples := range matrix {
-		labels := make(map[string]string, len(samples.Metric))
+		alert := make(model.LabelSet, len(samples.Metric))
 		for k, v := range samples.Metric {
-			labels[string(k)] = string(v)
-		}
-		alert := Alert{
-			Name:   string(samples.Metric["alertname"]),
-			Labels: labels,
+			alert[k] = v
 		}
 		ret[i] = Range{
 			Metric:  alert,
@@ -92,15 +84,12 @@ func (c *loader) LoadVectorRange(ctx context.Context, query string, start, end t
 	matrix := result.(model.Matrix)
 	ret := make(RangeVector, len(matrix))
 	for i, samples := range matrix {
-		labels := make(map[string]string, len(samples.Metric))
+		labels := make(model.LabelSet, len(samples.Metric))
 		for k, v := range samples.Metric {
-			labels[string(k)] = string(v)
-		}
-		labelSet := LabelSet{
-			Labels: labels,
+			labels[k] = v
 		}
 		ret[i] = Range{
-			Metric:  labelSet,
+			Metric:  labels,
 			Samples: samples.Values,
 			Step:    step,
 		}

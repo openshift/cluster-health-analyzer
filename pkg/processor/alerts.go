@@ -5,11 +5,11 @@ package processor
 import (
 	"slices"
 
-	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/prometheus/common/model"
 )
 
 // MapAlerts maps prometheus alerts to component health maps.
-func MapAlerts(alerts []prom.Alert) []ComponentHealthMap {
+func MapAlerts(alerts []model.LabelSet) []ComponentHealthMap {
 	healthMaps := make([]ComponentHealthMap, 0, len(alerts))
 	for _, alert := range alerts {
 		healthMap := getAlertHealthMap(alert)
@@ -19,7 +19,7 @@ func MapAlerts(alerts []prom.Alert) []ComponentHealthMap {
 }
 
 // getAlertHealthMap maps a prometheus alert to a component health map.
-func getAlertHealthMap(a prom.Alert) ComponentHealthMap {
+func getAlertHealthMap(a model.LabelSet) ComponentHealthMap {
 	// Check if alert is a node alert
 	layer, component, labels := determineComponent(a)
 
@@ -30,8 +30,8 @@ func getAlertHealthMap(a prom.Alert) ComponentHealthMap {
 		SrcLabels: labels,
 	}
 
-	healthMap.GroupId = a.Labels["group_id"]
-	healthMap.Health = ParseHealthValue(a.Labels["severity"])
+	healthMap.GroupId = string(a["group_id"])
+	healthMap.Health = ParseHealthValue(string(a["severity"]))
 
 	return healthMap
 }
@@ -39,19 +39,19 @@ func getAlertHealthMap(a prom.Alert) ComponentHealthMap {
 // determineComponent determines the component of a prometheus alert.
 //
 // It uses various strategies to determine the component.
-func determineComponent(a prom.Alert) (layer, component string, labels map[string]string) {
+func determineComponent(a model.LabelSet) (layer, component string, labels model.LabelSet) {
 	// Check if alert is a node alert.
 	return evalMatcherFns([]componentMatcherFn{
 		cvoAlertsMatcher,
 		computeMatcher,
 		coreMatcher,
 		workloadMatcher,
-	}, a.Labels)
+	}, a)
 }
 
-var cvoAlerts = []string{"ClusterOperatorDown", "ClusterOperatorDegraded"}
+var cvoAlerts = []model.LabelValue{"ClusterOperatorDown", "ClusterOperatorDegraded"}
 
-func cvoAlertsMatcher(labels map[string]string) (layer, comp string, keys []string) {
+func cvoAlertsMatcher(labels model.LabelSet) (layer, comp model.LabelValue, keys []model.LabelName) {
 	if slices.Contains(cvoAlerts, labels["alertname"]) {
 		component := labels["name"]
 		if component == "" {
@@ -62,30 +62,30 @@ func cvoAlertsMatcher(labels map[string]string) (layer, comp string, keys []stri
 	return "", "", nil
 }
 
-func computeMatcher(labels map[string]string) (layer, comp string, keys []string) {
+func computeMatcher(labels model.LabelSet) (layer, comp model.LabelValue, keys []model.LabelName) {
 	for _, nodeAlert := range nodeAlerts {
 		if labels["alertname"] == nodeAlert {
 			// TODO: determine node identifier as a component
 			// TODO: split nodes to controlplane and worker nodes
 			component := "compute"
-			return "compute", component, nil
+			return "compute", model.LabelValue(component), nil
 		}
 	}
 	return "", "", nil
 }
 
-func coreMatcher(labels map[string]string) (layer, comp string, keys []string) {
+func coreMatcher(labels model.LabelSet) (layer, comp model.LabelValue, keys []model.LabelName) {
 	// Try matching against core components.
 	if component, keys := findComponent(coreMatchers, labels); component != "" {
-		return "core", component, keys
+		return "core", model.LabelValue(component), keys
 	}
 	return "", "", nil
 }
 
-func workloadMatcher(labels map[string]string) (layer, comp string, keys []string) {
+func workloadMatcher(labels model.LabelSet) (layer, comp model.LabelValue, keys []model.LabelName) {
 	// Try matching against workload components.
 	if component, keys := findComponent(workloadMatchers, labels); component != "" {
-		return "workload", component, keys
+		return "workload", model.LabelValue(component), keys
 	}
 	return "", "", nil
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/utils"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +16,7 @@ func TestParseIntervalsFromCSV_ValidInput(t *testing.T) {
 
 	expected := []utils.RelativeInterval{
 		{
-			Labels: map[string]string{
+			Labels: model.LabelSet{
 				"alertname": "Watchdog",
 				"namespace": "openshift-monitoring",
 				"severity":  "none",
@@ -24,7 +25,7 @@ func TestParseIntervalsFromCSV_ValidInput(t *testing.T) {
 			End:   60,
 		},
 		{
-			Labels: map[string]string{
+			Labels: model.LabelSet{
 				"alertname": "ClusterOperatorDegraded",
 				"namespace": "openshift-cluster-version",
 				"severity":  "warning",

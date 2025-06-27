@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +27,7 @@ func Test_computeSeverityCountMetrics_SingleGroup(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "critical"},
+			Labels: model.LabelSet{"severity": "critical"},
 			Value:  1,
 		},
 	}
@@ -54,15 +55,15 @@ func Test_computeSeverityCountMetrics_ValidHealthValues(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "info"},
+			Labels: model.LabelSet{"severity": "info"},
 			Value:  1,
 		},
 		{
-			Labels: map[string]string{"severity": "warning"},
+			Labels: model.LabelSet{"severity": "warning"},
 			Value:  1,
 		},
 		{
-			Labels: map[string]string{"severity": "critical"},
+			Labels: model.LabelSet{"severity": "critical"},
 			Value:  1,
 		},
 	}
@@ -86,7 +87,7 @@ func Test_computeSeverityCountMetrics_MultipleGroupsSameSeverity(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "critical"},
+			Labels: model.LabelSet{"severity": "critical"},
 			Value:  2,
 		},
 	}
@@ -125,7 +126,7 @@ func Test_computeSeverityCountMetrics_CriticalOverWarning(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "critical"},
+			Labels: model.LabelSet{"severity": "critical"},
 			Value:  1,
 		},
 	}
@@ -149,7 +150,7 @@ func Test_computeSeverityCountMetrics_WarningOverInfo(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "warning"},
+			Labels: model.LabelSet{"severity": "warning"},
 			Value:  1,
 		},
 	}
@@ -173,7 +174,7 @@ func Test_computeSeverityCountMetrics_CriticalOverInfo(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "critical"},
+			Labels: model.LabelSet{"severity": "critical"},
 			Value:  1,
 		},
 	}
@@ -193,7 +194,7 @@ func Test_computeSeverityCountMetrics_UnrecognizedHealthValue(t *testing.T) {
 	}
 	expected := []prom.Metric{
 		{
-			Labels: map[string]string{"severity": "none"},
+			Labels: model.LabelSet{"severity": "none"},
 			Value:  1,
 		},
 	}
