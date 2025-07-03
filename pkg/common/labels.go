@@ -63,11 +63,11 @@ func NewLabelsMatcher(key string, matcher ValueMatcher) LabelsMatcher {
 	return labelMatcher{key: key, matcher: matcher}
 }
 
-func NewStringValuesMatcher(keys []string) ValueMatcher {
+func NewStringValuesMatcher(keys ...string) ValueMatcher {
 	return stringMatcher(keys)
 }
 
-func NewRegexValuesMatcher(regexes []*regexp.Regexp) ValueMatcher {
+func NewRegexValuesMatcher(regexes ...*regexp.Regexp) ValueMatcher {
 	return regexpMatcher(regexes)
 }
 
