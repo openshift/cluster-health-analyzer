@@ -3,23 +3,22 @@ package processor
 import (
 	"testing"
 
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 )
 
 // TestAlertsMapAlerts tests the mapping of prometheus alerts to component health maps.
 func TestAlertsMapAlerts(t *testing.T) {
-	alerts := []prom.Alert{
-		{Name: "KubeNodeNotReady", Labels: map[string]string{
+	alerts := []model.LabelSet{
+		{
 			"alertname": "KubeNodeNotReady",
-			"namespace": "openshift-monitoring"}},
-		{Name: "KubePodCrashLooping", Labels: map[string]string{
-			"alertname": "KubePodCrashLooping", "namespace": "openshift-etcd"}},
-		{Name: "ClusterOperatorDown", Labels: map[string]string{
+			"namespace": "openshift-monitoring"},
+		{
+			"alertname": "KubePodCrashLooping", "namespace": "openshift-etcd"},
+		{
 			"alertname": "ClusterOperatorDown",
 			"namespace": "openshift-cluster-version",
-			"name":      "machine-config"}},
+			"name":      "machine-config"},
 	}
 
 	componentsMap := MapAlerts(alerts)

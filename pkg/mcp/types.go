@@ -1,6 +1,8 @@
 package mcp
 
-import "github.com/prometheus/common/model"
+import (
+	"github.com/prometheus/common/model"
+)
 
 type Response struct {
 	Incidents Incidents `json:"incidents"`
@@ -20,7 +22,7 @@ type Incident struct {
 
 	// TODO
 	URL                string              `json:"-"`
-	Alerts             []model.Metric      `json:"alerts"`
+	Alerts             []model.LabelSet    `json:"alerts"`
 	AffectedComponents []string            `json:"affected_components"`
 	ComponentsSet      map[string]struct{} `json:"-"`
 }

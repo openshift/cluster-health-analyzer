@@ -1,61 +1,14 @@
 package prom
 
 import (
-	"fmt"
 	"math"
 	"time"
 
 	"github.com/prometheus/common/model"
 )
 
-// TODO: Replace with LabelSet and get rid of Alerts struct
-//   - it's unnecessary complex.
-type PromMetric interface {
-	MLabels() map[string]string
-}
-
-type LabelSet struct {
-	Labels map[string]string
-}
-
-func (ls LabelSet) MLabels() map[string]string {
-	return ls.Labels
-}
-
-func PromMetricToString(m PromMetric) string {
-	ret := fmt.Sprintf("%s{", m.MLabels()["__name__"])
-	first := true
-	for k, v := range m.MLabels() {
-		if k == "__name__" {
-			continue
-		}
-		if first {
-			first = false
-		} else {
-			ret += ", "
-		}
-
-		ret += k + `="` + v + `"`
-	}
-	ret += "}"
-	return ret
-}
-
-type Alert struct {
-	Name   string
-	Labels map[string]string
-}
-
-func (a Alert) MLabels() map[string]string {
-	return a.Labels
-}
-
-func (a Alert) String() string {
-	return PromMetricToString(a)
-}
-
 type Range struct {
-	Metric  PromMetric
+	Metric  model.LabelSet
 	Samples []model.SamplePair
 	Step    time.Duration
 }
@@ -64,7 +17,7 @@ type RangeVector []Range
 
 // Matrix is a dense matrix of time series aligned by time.
 type Matrix struct {
-	Metrics []PromMetric
+	Metrics []model.LabelSet
 	Values  [][]model.SampleValue
 	Start   model.Time
 	End     model.Time
@@ -114,7 +67,7 @@ func (v RangeVector) Expand() Matrix {
 	nSteps := (int64(end) - int64(start)) / stepMs
 
 	ret := Matrix{
-		Metrics: make([]PromMetric, len(v)),
+		Metrics: make([]model.LabelSet, len(v)),
 		Values:  make([][]model.SampleValue, len(v)),
 		Start:   start,
 		End:     end,

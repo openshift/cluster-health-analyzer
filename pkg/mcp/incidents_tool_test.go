@@ -48,9 +48,10 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Status:             "firing",
 					AffectedComponents: []string{"console", "monitoring"},
 					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
-					Alerts: []model.Metric{
-						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
-						{"alertname": "Alert2", "namespace": "openshift-console"}},
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert1", "namespace": "openshift-monitoring", "severity": "warning"},
+						{"alertname": "Alert2", "namespace": "openshift-console", "severity": "warning"},
+					},
 				},
 			},
 		},
@@ -85,9 +86,10 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Status:             "firing",
 					AffectedComponents: []string{"monitoring"},
 					ComponentsSet:      map[string]struct{}{"monitoring": {}},
-					Alerts: []model.Metric{
-						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
-						{"alertname": "Alert2", "namespace": "openshift-monitoring"}},
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert1", "namespace": "openshift-monitoring", "severity": "warning"},
+						{"alertname": "Alert2", "namespace": "openshift-monitoring", "severity": "warning"},
+					},
 				},
 			},
 		},
@@ -96,23 +98,13 @@ func TestTransformPromValueToIncident(t *testing.T) {
 			testInput: model.Vector{
 				&model.Sample{
 					Metric: model.Metric{
-						"src_alertname": "Alert1",
-						"group_id":      "1",
-						"src_severity":  "critical",
-						"component":     "monitoring",
-						"src_namespace": "openshift-monitoring",
-					},
-					Value: 2,
-				},
-				&model.Sample{
-					Metric: model.Metric{
 						"src_alertname": "Alert2",
 						"group_id":      "1",
 						"src_severity":  "warning",
 						"component":     "console",
 						"src_namespace": "openshift-console",
 					},
-					Value: 2,
+					Value: 1,
 				},
 				&model.Sample{
 					Metric: model.Metric{
@@ -122,6 +114,16 @@ func TestTransformPromValueToIncident(t *testing.T) {
 						"component":     "none",
 					},
 					Value: 1,
+				},
+				&model.Sample{
+					Metric: model.Metric{
+						"src_alertname": "Alert1",
+						"group_id":      "1",
+						"src_severity":  "critical",
+						"component":     "monitoring",
+						"src_namespace": "openshift-monitoring",
+					},
+					Value: 2,
 				},
 				&model.Sample{
 					Metric: model.Metric{
@@ -141,9 +143,10 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Status:             "firing",
 					AffectedComponents: []string{"console", "monitoring"},
 					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
-					Alerts: []model.Metric{
-						{"alertname": "Alert1", "namespace": "openshift-monitoring"},
-						{"alertname": "Alert2", "namespace": "openshift-console"}},
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert2", "namespace": "openshift-console", "severity": "warning"},
+						{"alertname": "Alert1", "namespace": "openshift-monitoring", "severity": "critical"},
+					},
 				},
 				"2": {
 					GroupId:            "2",
@@ -151,7 +154,9 @@ func TestTransformPromValueToIncident(t *testing.T) {
 					Status:             "firing",
 					AffectedComponents: []string{"console"},
 					ComponentsSet:      map[string]struct{}{"console": {}},
-					Alerts:             []model.Metric{{"alertname": "Alert4", "namespace": "openshift-console"}},
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert4", "namespace": "openshift-console", "severity": "warning"},
+					},
 				},
 			},
 		},
@@ -194,7 +199,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
-					Alerts: []model.Metric{
+					Alerts: []model.LabelSet{
 						{"alertname": "Alert1", "namespace": "foo"},
 						{"alertname": "Alert1", "namespace": "bar"},
 					},
@@ -204,7 +209,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				{
 					GroupId:   "1",
 					StartTime: "2025-06-16T22:49:43Z",
-					Alerts: []model.Metric{
+					Alerts: []model.LabelSet{
 						{
 							"alertname":  "Alert1",
 							"namespace":  "foo",
@@ -247,14 +252,14 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
-					Alerts: []model.Metric{
+					Alerts: []model.LabelSet{
 						{"alertname": "Alert1", "namespace": "foo"},
 						{"alertname": "Alert1", "namespace": "bar"},
 					},
 				},
 				"2": {
 					GroupId: "2",
-					Alerts: []model.Metric{
+					Alerts: []model.LabelSet{
 						{"alertname": "Alert1", "namespace": "foo"},
 						{"alertname": "Alert2", "namespace": "bar"},
 					},
@@ -264,7 +269,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				{
 					GroupId:   "1",
 					StartTime: "2025-06-16T22:49:43Z",
-					Alerts: []model.Metric{
+					Alerts: []model.LabelSet{
 						{
 							"alertname":  "Alert1",
 							"namespace":  "foo",
@@ -280,7 +285,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				{
 					GroupId:   "2",
 					StartTime: "2025-06-16T22:49:43Z",
-					Alerts: []model.Metric{
+					Alerts: []model.LabelSet{
 						{
 							"alertname":  "Alert1",
 							"namespace":  "foo",

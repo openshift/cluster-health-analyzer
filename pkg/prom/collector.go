@@ -5,10 +5,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	prom "github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/model"
 )
 
 type Metric struct {
-	Labels prom.Labels
+	Labels model.LabelSet
 	Value  float64
 }
 
@@ -54,8 +55,8 @@ func (m *metricSet) Collect(ch chan<- prom.Metric) {
 				continue
 			}
 
-			labels = append(labels, k)
-			values = append(values, v)
+			labels = append(labels, string(k))
+			values = append(values, string(v))
 		}
 		desc := prom.NewDesc(m.name, m.help, labels, nil)
 		ch <- prom.MustNewConstMetric(desc, prom.GaugeValue, metric.Value, values...)

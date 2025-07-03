@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -41,7 +42,7 @@ func IncidentsTool() mcp.Tool {
 // in-cluster Prometheus and queries the Incidents metrics.
 func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	slog.Info("Incidents tool received request with ", "params", request.Params, "and arguments ", request.Params.Arguments)
-	token, err := tokenFromCtx(ctx)
+	token, err := getTokenFromCtx(ctx)
 	if err != nil {
 		slog.Error(err.Error())
 		return nil, err
@@ -55,7 +56,7 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	}
 
 	promAPI := v1.NewAPI(promClient)
-	val, warning, err := promAPI.Query(ctx, fmt.Sprintf("%s{}", processor.ClusterHealthComponentsMap), time.Now())
+	val, warning, err := promAPI.Query(ctx, processor.ClusterHealthComponentsMap, time.Now())
 	if err != nil {
 		slog.Error("Recieved error response from Prometheus", "error", err)
 		return nil, err
@@ -101,58 +102,45 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 			slog.Debug("Skipping low severity ", "alert", alertName, "severity", alertSeverity)
 			continue
 		}
+		labels := common.SrcLabels(v.Metric)
 		healthyVal := processor.HealthValue(v.Value)
-		severity := healthyVal.String()
 		groupId := string(v.Metric["group_id"])
 		component := string(v.Metric["component"])
-		namespace := v.Metric["src_namespace"]
 
 		if existingInc, ok := incidents[groupId]; ok {
 			existingInc.ComponentsSet[component] = struct{}{}
 			existingInc.AffectedComponents = slices.Collect(maps.Keys(existingInc.ComponentsSet))
 			sort.Strings(existingInc.AffectedComponents)
-			existingInc.Alerts = append(existingInc.Alerts, model.Metric{"alertname": alertName, "namespace": namespace})
+			existingInc.Alerts = append(existingInc.Alerts, model.LabelSet(labels))
+			if healthyVal > processor.ParseHealthValue(existingInc.Severity) {
+				existingInc.Severity = healthyVal.String()
+			}
 			incidents[existingInc.GroupId] = existingInc
 		} else {
 			incidents[groupId] = Incident{
 				GroupId:  string(groupId),
-				Severity: severity,
+				Severity: healthyVal.String(),
 				Status:   "firing",
 				ComponentsSet: map[string]struct{}{
 					component: {},
 				},
 				AffectedComponents: []string{component},
-				Alerts:             []model.Metric{{"alertname": alertName, "namespace": namespace}},
+				Alerts:             []model.LabelSet{labels},
 			}
 		}
 	}
 	return incidents, nil
 }
 
-// tokenFromCtx gets the authorization header from the
-// provide context
-func tokenFromCtx(ctx context.Context) (string, error) {
+// getTokenFromCtx gets the authorization header from the
+// provided context
+func getTokenFromCtx(ctx context.Context) (string, error) {
 	k8sToken := ctx.Value(authHeaderStr)
 	k8TokenStr, ok := k8sToken.(string)
 	if !ok {
 		return "", fmt.Errorf("failed to convert the authorization token to string")
 	}
 	return k8TokenStr, nil
-}
-
-// alertIdentifier helps to identify particular alert,
-// but it currently does not distinguish alert with the same
-// name and in the same namespace
-type alertIdentifier struct {
-	name      string
-	namespace string
-}
-
-func alertIdentifierFromSample(s model.Sample) alertIdentifier {
-	return alertIdentifier{
-		name:      string(s.Metric["alertname"]),
-		namespace: string(s.Metric["namespace"]),
-	}
 }
 
 // getAlertDataForIncidents queries Prometheus for firing alerts from the last 15 days (to have
@@ -171,41 +159,39 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 		return nil
 	}
 
-	var incidentsSlice []Incident
-
-	alertsByName := make(map[alertIdentifier]model.Metric)
+	var firingAlerts []model.LabelSet
 	for i := range alertData {
 		sample := alertData[i]
-		alertID := alertIdentifierFromSample(*sample)
-
 		metric := sample.Metric
 		alertStartTime := time.Unix(int64(sample.Value), 0).UTC().Format(time.RFC3339)
 		metric[model.LabelName("start_time")] = model.LabelValue(alertStartTime)
-		alertsByName[alertID] = metric
+		firingAlerts = append(firingAlerts, model.LabelSet(metric))
 	}
-
+	var incidentsSlice []Incident
 	for _, inc := range incidents {
-		updatedAlerts := make([]model.Metric, 0, len(inc.Alerts))
-
+		var updatedAlerts []model.LabelSet
 		incidentStartTime := time.Now().UTC()
-		for _, alert := range inc.Alerts {
-			alertName := string(alert["alertname"])
-			alertNamespace := string(alert["namespace"])
-			alertLabels := alertsByName[alertIdentifier{name: alertName, namespace: alertNamespace}]
-			alertStartTime, err := time.Parse(time.RFC3339, string(alertLabels["start_time"]))
-			if err != nil {
-				slog.Error("Failed to convert string to time", "string", string(alertLabels["start_time"]), "error", err)
-				continue
+		for _, alertInIncident := range inc.Alerts {
+			subsetMatcher := common.LabelsSubsetMatcher{Labels: alertInIncident}
+			for _, firingAlert := range firingAlerts {
+				match, _ := subsetMatcher.Matches(firingAlert)
+				if match {
+					updatedAlerts = append(updatedAlerts, firingAlert)
+					startTimeValue := string(firingAlert["start_time"])
+					alertStartTime, err := time.Parse(time.RFC3339, startTimeValue)
+					if err != nil {
+						slog.Error("Failed to convert string to time", "string", startTimeValue, "error", err)
+						continue
+					}
+					if alertStartTime.Before(incidentStartTime) {
+						incidentStartTime = alertStartTime.UTC()
+					}
+				}
 			}
-			if alertStartTime.Before(incidentStartTime) {
-				incidentStartTime = alertStartTime.UTC()
-			}
-			updatedAlerts = append(updatedAlerts, alertLabels)
 		}
 		inc.Alerts = updatedAlerts
 		inc.StartTime = incidentStartTime.UTC().Format(time.RFC3339)
 		incidentsSlice = append(incidentsSlice, inc)
 	}
-
 	return incidentsSlice
 }

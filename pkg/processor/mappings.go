@@ -1,11 +1,16 @@
 package processor
 
+import (
+	"regexp"
+
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
+	"github.com/prometheus/common/model"
+)
+
 // This file contains data used to map the signal to particular components.
 
-import "regexp"
-
 var (
-	nodeAlerts []string = []string{
+	nodeAlerts []model.LabelValue = []model.LabelValue{
 		"NodeClockNotSynchronising",
 		"KubeNodeNotReady",
 		"KubeNodeUnreachable",
@@ -36,227 +41,230 @@ var (
 	}
 
 	coreMatchers = []componentMatcher{
-		{"etcd", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
-				"openshift-etcd",
-				"openshift-etcd-operator",
-			}}}},
-		{"kube-apiserver", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
-				"openshift-kube-apiserver",
-				"openshift-kube-apiserver-operator",
-			}}}},
-		{"kube-controller-manager", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+		{"etcd", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace",
+				common.NewStringValuesMatcher(
+					"openshift-etcd",
+					"openshift-etcd-operator"))}},
+		{"kube-apiserver", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace",
+				common.NewStringValuesMatcher(
+					"openshift-kube-apiserver",
+					"openshift-kube-apiserver-operator"))}},
+		{"kube-controller-manager", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-kube-controller-manager",
 				"openshift-kube-controller-manager-operator",
 				"kube-system",
-			}}}},
-		{"kube-scheduler", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"kube-scheduler", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-kube-scheduler",
 				"openshift-kube-scheduler-operator",
-			}}}},
-		{"machine-approver", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"machine-approver", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cluster-machine-approver",
 				"openshift-machine-approver-operator",
-			}}}},
-		{"machine-config", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"machine-config", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-machine-config-operator",
-			}},
-			labelMatcher{"alertname", stringMatcher{
+			)),
+			common.NewLabelsMatcher("alertname", common.NewStringValuesMatcher(
 				"HighOverallControlPlaneMemory",
 				"ExtremelyHighIndividualControlPlaneMemory",
 				"MissingMachineConfig",
 				"MCCBootImageUpdateError",
 				"KubeletHealthState",
 				"SystemMemoryExceedsReservation",
-			}}}},
-		{"version", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"version", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cluster-version",
 				"openshift-version-operator",
-			}},
-			labelMatcher{"alertname", stringMatcher{
+			)),
+			common.NewLabelsMatcher("alertname", common.NewStringValuesMatcher(
 				"ClusterNotUpgradeable",
 				"UpdateAvailable",
-			}}}},
-		{"dns", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"dns", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-dns",
 				"openshift-dns-operator",
-			}}}},
-		{"authentication", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"authentication", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-authentication",
 				"openshift-oauth-apiserver",
 				"openshift-authentication-operator",
-			}}}},
-		{"cert-manager", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"cert-manager", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cert-manager",
 				"openshift-cert-manager-operator",
-			}}}},
-		{"cloud-controller-manager", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"cloud-controller-manager", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cloud-controller-manager",
 				"openshift-cloud-controller-manager-operator",
-			}}}},
-		{"cloud-credential", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"cloud-credential", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cloud-credential-operator",
-			}}}},
-		{"cluster-api", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"cluster-api", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cluster-api",
 				"openshift-cluster-api-operator",
-			}}}},
-		{"config-operator", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"config-operator", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-config-operator",
-			}}}},
-		{"kube-storage-version-migrator", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"kube-storage-version-migrator", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-kube-storage-version-migrator",
 				"openshift-kube-storage-version-migrator-operator",
-			}}}},
-		{"image-registry", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"image-registry", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-image-registry",
 				"openshift-image-registry-operator",
-			}}}},
-		{"ingress", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"ingress", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-ingress",
 				"openshift-route-controller-manager",
 				"openshift-ingress-canary",
 				"openshift-ingress-operator",
-			}}}},
-		{"console", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"console", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-console",
 				"openshift-console-operator",
-			}}}},
-		{"insights", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"insights", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-insights",
 				"openshift-insights-operator",
-			}}}},
-		{"machine-api", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"machine-api", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-machine-api",
 				"openshift-machine-api-operator",
-			}}}},
-		{"monitoring", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"monitoring", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-monitoring",
 				"openshift-monitoring-operator",
-			}}}},
-		{"network", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"network", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-network-operator",
 				"openshift-ovn-kubernetes",
 				"openshift-multus",
 				"openshift-network-diagnostics",
 				"openshift-sdn",
-			}}}},
-		{"node-tuning", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"node-tuning", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cluster-node-tuning-operator",
 				"openshift-node-tuning-operator",
-			}}}},
-		{"openshift-apiserver", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-apiserver", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-apiserver",
 				"openshift-apiserver-operator",
-			}}}},
-		{"openshift-controller-manager", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-controller-manager", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-controller-manager",
 				"openshift-controller-manager-operator",
-			}}}},
-		{"openshift-samples", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-samples", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cluster-samples-operator",
 				"openshift-samples-operator",
-			}}}},
-		{"operator-lifecycle-manager", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"operator-lifecycle-manager", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-operator-lifecycle-manager",
-			}}}},
-		{"service-ca", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"service-ca", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-service-ca",
 				"openshift-service-ca-operator",
-			}}}},
-		{"storage", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"storage", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-storage",
 				"openshift-cluster-csi-drivers",
 				"openshift-cluster-storage-operator",
 				"openshift-storage-operator",
-			}}}},
-		{"vertical-pod-autoscaler", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"vertical-pod-autoscaler", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-vertical-pod-autoscaler",
 				"openshift-vertical-pod-autoscaler-operator",
-			}}}},
-		{"marketplace", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"marketplace", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-marketplace",
 				"openshift-marketplace-operator",
-			}}}},
+			)),
+		},
+		},
 	}
 
 	workloadMatchers = []componentMatcher{
-		{"openshift-compliance", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+		{"openshift-compliance", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-compliance",
-			}}}},
-		{"openshift-file-integrity", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-file-integrity", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-file-integrity",
-			}}}},
-		{"openshift-logging", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-logging", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-logging",
-			}}}},
-		{"openshift-user-workload-monitoring", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-user-workload-monitoring", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-user-workload-monitoring",
-			}}}},
-		{"openshift-gitops", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-gitops", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-gitops",
 				"openshift-gitops-operator",
-			}}}},
-		{"openshift-operators", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+			))}},
+		{"openshift-operators", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-operators",
-			}}}},
-		{"kubevirt", []LabelsMatcher{
-			labelMatcher{"kubernetes_operator_part_of", stringMatcher{
+			))}},
+		{"kubevirt", []common.LabelsMatcher{
+			common.NewLabelsMatcher("kubernetes_operator_part_of", common.NewStringValuesMatcher(
 				"kubevirt",
-			}},
-			labelMatcher{"namespace", stringMatcher{
+			)),
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-cnv",
-			}},
+			)),
 		}},
-		{"openshift-local-storage", []LabelsMatcher{
-			labelMatcher{"namespace", stringMatcher{
+		{"openshift-local-storage", []common.LabelsMatcher{
+			common.NewLabelsMatcher("namespace", common.NewStringValuesMatcher(
 				"openshift-local-storage",
-			}}}},
-		{"quay", []LabelsMatcher{
-			labelMatcher{"container", stringMatcher{
+			))}},
+		{"quay", []common.LabelsMatcher{
+			common.NewLabelsMatcher("container", common.NewStringValuesMatcher(
 				"quay-app",
 				"quay-mirror",
 				"quay-app-upgrade",
-			}}}},
-		{"Argo", []LabelsMatcher{
-			labelMatcher{"alertname", regexpMatcher{
+			))}},
+		{"Argo", []common.LabelsMatcher{
+			common.NewLabelsMatcher("alertname", common.NewRegexValuesMatcher(
 				regexp.MustCompile("^Argo"),
-			}}}},
+			))},
+		},
 	}
 )
