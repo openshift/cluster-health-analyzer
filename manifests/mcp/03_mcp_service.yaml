@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: cluster-health-analyzer-mcp
+  name: cluster-health-mcp-server
+  namespace: openshift-cluster-observability-operator
+spec:
+  ports:
+  - name: mcp
+    port: 8085
+    targetPort: mcp
+  selector:
+    app.kubernetes.io/name: cluster-health-analyzer-mcp
