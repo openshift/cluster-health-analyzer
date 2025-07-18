@@ -3,7 +3,6 @@ package prom
 import (
 	"sync"
 
-	"github.com/prometheus/client_golang/prometheus"
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 )
@@ -24,7 +23,7 @@ type metricSet struct {
 // updates of metrics. Useful when processing a set of metrics that are later
 // exposed to Prometheus via different metric.
 type MetricSet interface {
-	prometheus.Collector
+	prom.Collector
 	Update(metrics []Metric)
 }
 
