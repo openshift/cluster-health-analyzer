@@ -20,7 +20,7 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: cluster-health-mcp-server
-        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
+        image: "quay.io/openshiftanalytics/cluster-health-analyzer:mcp-dev-preview"
         imagePullPolicy: Always
         args:
           - mcp
