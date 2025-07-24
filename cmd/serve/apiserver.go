@@ -73,11 +73,11 @@ func buildServerConfig(o options) (*genericapiserver.Config, error) {
 	servingInfo := configv1.HTTPServingInfo{}
 	configdefaults.SetRecommendedHTTPServingInfoDefaults(&servingInfo)
 
-	servingInfo.ServingInfo.CertInfo.CertFile = o.CertFile
-	servingInfo.ServingInfo.CertInfo.KeyFile = o.CertKey
+	servingInfo.CertFile = o.CertFile
+	servingInfo.KeyFile = o.CertKey
 	// Don't set a CA file for client certificates because the CA is read from
 	// the kube-system/extension-apiserver-authentication ConfigMap.
-	servingInfo.ServingInfo.ClientCA = ""
+	servingInfo.ClientCA = ""
 
 	serverConfig, err := serving.ToServerConfig(
 		context.Background(),

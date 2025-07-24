@@ -263,7 +263,7 @@ func readIntervalsFromCSV(scenarioFile string) ([]utils.RelativeInterval, error)
 		slog.Error("Failed to open CSV file", "error", err)
 		return nil, err
 	}
-	defer file.Close()
+	defer file.Close() // nolint:errcheck
 
 	return parseIntervalsFromCSV(file)
 }
@@ -423,22 +423,22 @@ func simulate(outputFile, scenarioFile string) {
 
 	f, err := os.Create(outputFile)
 	must(err)
-	defer f.Close()
+	defer f.Close() // nolint:errcheck
 
 	w := bufio.NewWriter(f)
-	defer w.Flush()
+	defer w.Flush() // nolint:errcheck
 
 	// Output ALERTS
-	fmt.Fprintln(w, "# HELP ALERTS Alert status")
-	fmt.Fprintln(w, "# TYPE ALERTS gauge")
+	fprintln(w, "# HELP ALERTS Alert status")
+	fprintln(w, "# TYPE ALERTS gauge")
 	for _, i := range intervals {
 		err := fmtInterval(w, "ALERTS", i.Metric, i.Start, i.End, step, 1)
 		must(err)
 	}
 
 	// Output cluster:health:components
-	fmt.Fprintln(w, "# HELP cluster:health:components Cluster health components ranking")
-	fmt.Fprintln(w, "# TYPE cluster:health:components gauge")
+	fprintln(w, "# HELP cluster:health:components Cluster health components ranking")
+	fprintln(w, "# TYPE cluster:health:components gauge")
 	ranks := processor.BuildComponentRanks()
 	for _, rank := range ranks {
 		err := fmtInterval(w, "cluster:health:components", model.LabelSet{
@@ -457,8 +457,8 @@ func simulate(outputFile, scenarioFile string) {
 	}
 
 	// Output cluster;health;components:map
-	fmt.Fprintln(w, "# HELP cluster:health:components:map Cluster health components mapping")
-	fmt.Fprintln(w, "# TYPE cluster:health:components:map gauge")
+	fprintln(w, "# HELP cluster:health:components:map Cluster health components mapping")
+	fprintln(w, "# TYPE cluster:health:components:map gauge")
 
 	for _, gi := range groupedIntervalsSet {
 		alert := gi.Metric
@@ -469,7 +469,8 @@ func simulate(outputFile, scenarioFile string) {
 		err := fmtInterval(w, "cluster:health:components:map", healthMap.Labels(), gi.Start, gi.End, step, float64(healthMap.Health))
 		must(err)
 	}
-	fmt.Fprint(w, "# EOF")
+	_, err = fmt.Fprint(w, "# EOF")
+	must(err)
 
 	groups := make(map[string][]processor.GroupedInterval)
 	for _, gi := range groupedIntervalsSet {
@@ -488,7 +489,7 @@ func simulate(outputFile, scenarioFile string) {
 			if interval.End.After(end) {
 				end = interval.End
 			}
-			alertname := string(interval.Interval.Metric["alertname"])
+			alertname := string(interval.Metric["alertname"])
 			alerts[alertname] = struct{}{}
 		}
 	}
@@ -496,4 +497,9 @@ func simulate(outputFile, scenarioFile string) {
 	slog.Info("Generated incidents", "num", len(groups))
 
 	slog.Info("Openmetrics file saved", "output", outputFile)
+}
+
+func fprintln(w *bufio.Writer, s string) {
+	_, err := fmt.Fprintln(w, s)
+	must(err)
 }
