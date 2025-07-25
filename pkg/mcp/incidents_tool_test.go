@@ -355,11 +355,11 @@ func (m *MockPromAPI) DeleteSeries(ctx context.Context, matches []string, startT
 	return nil
 }
 
-func (m *MockPromAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...v1.Option) ([]string, v1.Warnings, error) {
+func (m *MockPromAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time) ([]string, v1.Warnings, error) {
 	return nil, nil, nil
 }
 
-func (m *MockPromAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time, opts ...v1.Option) (model.LabelValues, v1.Warnings, error) {
+func (m *MockPromAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time) (model.LabelValues, v1.Warnings, error) {
 	return nil, nil, nil
 }
 
@@ -383,7 +383,7 @@ func (m *MockPromAPI) Runtimeinfo(ctx context.Context) (v1.RuntimeinfoResult, er
 	return v1.RuntimeinfoResult{}, nil
 }
 
-func (m *MockPromAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time, opts ...v1.Option) ([]model.LabelSet, v1.Warnings, error) {
+func (m *MockPromAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time) ([]model.LabelSet, v1.Warnings, error) {
 	return nil, nil, nil
 }
 
@@ -391,7 +391,7 @@ func (m *MockPromAPI) Snapshot(ctx context.Context, skipHead bool) (v1.SnapshotR
 	return v1.SnapshotResult{}, nil
 }
 
-func (m *MockPromAPI) TSDB(ctx context.Context, opts ...v1.Option) (v1.TSDBResult, error) {
+func (m *MockPromAPI) TSDB(ctx context.Context) (v1.TSDBResult, error) {
 	return v1.TSDBResult{}, nil
 }
 func (m *MockPromAPI) Targets(ctx context.Context) (v1.TargetsResult, error) {

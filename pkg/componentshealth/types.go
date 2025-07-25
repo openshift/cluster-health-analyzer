@@ -79,10 +79,12 @@ func ParseKubeHealthStatus(s status.Result) HealthStatus {
 	}
 }
 
-var OK HealthStatus = 0
-var Warning HealthStatus = 1
-var Error HealthStatus = 2
-var Unknown HealthStatus = -1
+const (
+	OK      HealthStatus = 0
+	Warning HealthStatus = 1
+	Error   HealthStatus = 2
+	Unknown HealthStatus = -1
+)
 
 type ComponentHealth struct {
 	name            string
