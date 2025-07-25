@@ -70,7 +70,7 @@ func TestEvaluateComponentsHealth(t *testing.T) {
 			testProcessor := createTestHealthProcessor(mockAlertLoader, newMockHealthChecker(OK))
 			testConf, err := loadConfig(tt.testComponentsFile)
 			assert.NoError(t, err)
-			componentsHealths := testProcessor.evaluateComponentsHealth(t.Context(), testConf.Components)
+			componentsHealths := testProcessor.evaluateComponentsHealth(context.Background(), testConf.Components)
 			assert.Equal(t, tt.expectedNameStatusPairs, componentHealthToNameStatusPairs(componentsHealths))
 		})
 	}
@@ -324,7 +324,7 @@ func TestEvaluateComponentHealth(t *testing.T) {
 				},
 			}
 			testProcessor := createTestHealthProcessor(mockAlertLoader, tt.mockKubeHealthChecker)
-			componentsHealth, err := testProcessor.evaluateComponent(t.Context(), tt.component)
+			componentsHealth, err := testProcessor.evaluateComponent(context.Background(), tt.component)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedComponentHealth, componentsHealth)
 		})
