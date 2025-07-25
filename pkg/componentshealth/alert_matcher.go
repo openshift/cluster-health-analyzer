@@ -48,28 +48,27 @@ func (p *alertMatcher) evaluateAlerts(alerts AlertsSelectors) ([]model.LabelSet,
 func (a *alertMatcher) matchingAlertFound(matchLabels map[string][]string) ([]models.Alert, map[string]string, error) {
 	var matchingAlerts []models.Alert
 	labelsMatched := make(map[string]string)
-	numOfMatches := 0
 
 	for key, values := range matchLabels {
 		// when there are already some matching alerts then
 		// we need to check if any of them matches the label pair
 		if len(matchingAlerts) > 0 {
-			for i, ma := range matchingAlerts {
+			filteredMatchingAlerts := make([]models.Alert, 0, len(matchingAlerts))
+			for _, ma := range matchingAlerts {
 				matchFound := false
 				for _, v := range values {
 					if existingLV, ok := ma.Labels[key]; ok && existingLV == v {
 						labelsMatched[key] = v
 						matchFound = true
-						numOfMatches++
 					}
 				}
-				// if previously matching alert doesn't match any new required label
-				// then remove it
-				if !matchFound {
-					matchingAlerts = deleteIndexFromSlice(matchingAlerts, i)
+				if matchFound {
+					filteredMatchingAlerts = append(filteredMatchingAlerts, ma)
 				}
 			}
+			matchingAlerts = filteredMatchingAlerts
 		} else {
+			matchFound := false
 			for _, v := range values {
 				labelPair := fmt.Sprintf("%s=%s", key, v)
 				alerts, err := a.loader.ActiveAlertsWithLabels([]string{labelPair})
@@ -77,17 +76,17 @@ func (a *alertMatcher) matchingAlertFound(matchLabels map[string][]string) ([]mo
 					return nil, nil, err
 				}
 				if len(alerts) > 0 {
-					numOfMatches++
+					matchFound = true
 					labelsMatched[key] = v
 				}
 				matchingAlerts = append(matchingAlerts, alerts...)
 			}
+			// if there's no match found, we can return, because the
+			// "matchLabels" requirement is not satisfied
+			if !matchFound {
+				return nil, nil, nil
+			}
 		}
-	}
-	// number of matches must be less than number of labels/key-value pairs
-	// to match
-	if numOfMatches < len(matchLabels) {
-		return nil, nil, nil
 	}
 
 	return matchingAlerts, labelsMatched, nil
@@ -112,14 +111,4 @@ func cleanupLabels(alerts []models.Alert, matchedLabels map[string]string) []mod
 		cleanedAlerts = append(cleanedAlerts, cleanAlert)
 	}
 	return cleanedAlerts
-}
-
-func deleteIndexFromSlice(s []models.Alert, i int) []models.Alert {
-	if i >= len(s) {
-		return s
-	}
-
-	first := s[:i]
-	rest := s[i+1:]
-	return append(first, rest...)
 }
