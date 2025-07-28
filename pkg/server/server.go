@@ -62,14 +62,8 @@ type Server interface {
 
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
-func StartServer(interval time.Duration, prometheusURL string, server Server, disableComponentsHealth bool) {
+func StartServer(interval time.Duration, prometheusURL string, server Server, disableComponentsHealth bool, disableIncidents bool) {
 	slog.Info("Starting server")
-
-	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, groupSeverityCountMetrics, interval, prometheusURL)
-	if err != nil {
-		slog.Error("Failed to create processor, terminating", "err", err)
-		return
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -85,16 +79,26 @@ func StartServer(interval time.Duration, prometheusURL string, server Server, di
 		slog.Info("Components health evaluation is disabled")
 	}
 
-	end := time.Now()
-	start := end.Add(-1 * historyLookback)
-	step := time.Minute
-	err = processor.InitGroupsCollection(ctx, start, end, step)
-	if err != nil {
-		slog.Error("Failed to initialize groups collection, terminating", "err", err)
-		return
-	}
+	if !disableIncidents {
+		processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, groupSeverityCountMetrics, interval, prometheusURL)
+		if err != nil {
+			slog.Error("Failed to create processor, terminating", "err", err)
+			return
+		}
 
-	processor.Start(ctx)
+		end := time.Now()
+		start := end.Add(-1 * historyLookback)
+		step := time.Minute
+		err = processor.InitGroupsCollection(ctx, start, end, step)
+		if err != nil {
+			slog.Error("Failed to initialize groups collection, terminating", "err", err)
+			return
+		}
+
+		processor.Start(ctx)
+	} else {
+		slog.Info("Incident detection is disabled")
+	}
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(healthMapMetrics)
@@ -109,7 +113,7 @@ func StartServer(interval time.Duration, prometheusURL string, server Server, di
 	server.Handle("/metrics",
 		promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 
-	err = server.Start(context.Background())
+	err := server.Start(ctx)
 	if err != nil {
 		slog.Error("Failed to run server", "err", err)
 	}
