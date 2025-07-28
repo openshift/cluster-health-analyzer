@@ -32,7 +32,7 @@ func newServeCmd() *cobra.Command {
 
 			slog.Info("Parameters", "refresh-interval", interval, "prom-url", opts.PromURL)
 
-			server.StartServer(interval, opts.PromURL, apiServer)
+			server.StartServer(interval, opts.PromURL, apiServer, opts.DisableComponentsHealth)
 		},
 	}
 	cmd.Flags().AddFlagSet(opts.flags())
@@ -53,6 +53,9 @@ type options struct {
 
 	// Only to be used to for testing.
 	DisableAuthForTesting bool
+
+	// Disable components health evaluation
+	DisableComponentsHealth bool
 }
 
 // newOptions initializes default values for the command options.
@@ -91,5 +94,7 @@ func (o *options) flags() *pflag.FlagSet {
 
 	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
 		"Flag for testing purposes to disable auth")
+	fs.BoolVar(&o.DisableComponentsHealth, "disable-components-health", o.DisableComponentsHealth,
+		"Flag to disable components health evaluation based on alerts and kube-health evaluation")
 	return fs
 }

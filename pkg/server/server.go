@@ -62,7 +62,7 @@ type Server interface {
 
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
-func StartServer(interval time.Duration, prometheusURL string, server Server) {
+func StartServer(interval time.Duration, prometheusURL string, server Server, disableComponentsHealth bool) {
 	slog.Info("Starting server")
 
 	processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, groupSeverityCountMetrics, interval, prometheusURL)
@@ -71,14 +71,19 @@ func StartServer(interval time.Duration, prometheusURL string, server Server) {
 		return
 	}
 
-	componentsProc, err := componentshealth.NewHealthProcessor(interval, componentHealthAlerts, componentHealthObjects, componentsHealth)
-	if err != nil {
-		slog.Info("Failed to create component procesor, terminating", "err", err)
-		return
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	componentsProc.Start(ctx)
+
+	if !disableComponentsHealth {
+		componentsProc, err := componentshealth.NewHealthProcessor(interval, componentHealthAlerts, componentHealthObjects, componentsHealth)
+		if err != nil {
+			slog.Info("Failed to create component procesor, terminating", "err", err)
+			return
+		}
+		componentsProc.Start(ctx)
+	} else {
+		slog.Info("Components health evaluation is disabled")
+	}
 
 	end := time.Now()
 	start := end.Add(-1 * historyLookback)
