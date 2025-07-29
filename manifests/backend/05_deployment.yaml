@@ -46,6 +46,8 @@ spec:
         - mountPath: /etc/tls/private
           name: cluster-health-analyzer-tls
           readOnly: true
+        - mountPath: /etc/config
+          name: config
       volumes:
       - name: cluster-health-analyzer-tls
         secret:

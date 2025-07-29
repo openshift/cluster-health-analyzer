@@ -155,7 +155,11 @@ func createHealthMetrics(componentHealth []*ComponentHealth) ([]prom.Metric, []p
 	return alertMetrics, objectMetrics, componentMetrics
 }
 
-// componentHealthMetrics
+// componentHealthMetrics creates list of alert, object and component metrics
+// based on provided component health. If the component health has some active/firing
+// alerts then the alert metrics are created. If the component has some childs, then
+// component metric is created. The object metrics are created for all the objects
+// regardless their status.
 func componentHealthMetrics(cHealth *ComponentHealth) ([]prom.Metric, []prom.Metric, []prom.Metric) {
 	var alertMetrics, objectMetrics, componentMetrics []prom.Metric
 	for _, child := range cHealth.childComponents {
