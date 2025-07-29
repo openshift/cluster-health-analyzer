@@ -93,6 +93,8 @@ type ComponentHealth struct {
 	alerts          []model.LabelSet
 	healthStatus    HealthStatus
 	objectStatuses  []ObjectStatus
+	// to recognize if the alert evaluation happened with errors or not
+	alertsErr error
 }
 
 func (c *ComponentHealth) AddChild(ch *ComponentHealth) *ComponentHealth {

@@ -120,15 +120,11 @@ func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (
 		}
 		ch.AddChild(childHealth)
 	}
-	objectStatuses, err := p.khChecker.EvaluateObjects(ctx, c.Objects)
-	if err != nil {
-		return nil, err
-	}
-	alerts, err := p.alertMatcher.evaluateAlerts(c.AlertsSelectors)
-	if err != nil {
-		return nil, err
-	}
-	ch.healthStatus = calculateHealthStatus(worstChildStatus, alerts, objectStatuses)
+
+	objectStatuses := p.khChecker.EvaluateObjects(ctx, c.Objects)
+	alerts, alertsErr := p.alertMatcher.evaluateAlerts(c.AlertsSelectors)
+	ch.alertsErr = alertsErr
+	ch.healthStatus = calculateHealthStatus(worstChildStatus, alerts, objectStatuses, alertsErr)
 	ch.alerts = alerts
 	ch.objectStatuses = objectStatuses
 	return &ch, nil
@@ -184,18 +180,28 @@ func componentHealthMetrics(cHealth *ComponentHealth) ([]prom.Metric, []prom.Met
 			m := metricWithObjectAttributes(componentName, o)
 			objectMetrics = append(objectMetrics, m)
 		}
+		// if there was an alert error then create alert metric
+		// with no labels and with unknown status
+		if cHealth.alertsErr != nil {
+			m := metricWithNameAndStatus(componentName, cHealth.healthStatus)
+			alertMetrics = append(alertMetrics, m)
+		}
 	}
 	return alertMetrics, objectMetrics, componentMetrics
 }
 
 // calculateHealthStatus calculates HealthStatus based on the provided status and alerts
-func calculateHealthStatus(hs HealthStatus, alerts []model.LabelSet, objectStatus []ObjectStatus) HealthStatus {
+func calculateHealthStatus(hs HealthStatus, alerts []model.LabelSet, objectStatus []ObjectStatus, alertsErr error) HealthStatus {
 	if hs.IsError() {
 		return Error
 	}
 
 	if hs.IsWarning() {
 		return Warning
+	}
+
+	if alertsErr != nil {
+		return Unknown
 	}
 
 	healthStatus := OK

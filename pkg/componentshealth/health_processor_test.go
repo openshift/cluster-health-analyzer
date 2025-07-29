@@ -564,7 +564,7 @@ type mockKubeHealthChecker struct {
 
 // EvaluateObjects creates ObjectStatus for each K8s Object.
 // All the objects are created with the HealthStatus set in the mockKubeHealthChecker.
-func (m *mockKubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K8sObject) ([]ObjectStatus, error) {
+func (m *mockKubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K8sObject) []ObjectStatus {
 	var objectStatuses []ObjectStatus
 	for _, o := range objects {
 		objectStatus := ObjectStatus{
@@ -576,5 +576,5 @@ func (m *mockKubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K
 		objectStatuses = append(objectStatuses, objectStatus)
 	}
 
-	return objectStatuses, nil
+	return objectStatuses
 }

@@ -3,6 +3,7 @@ package componentshealth
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sort"
@@ -16,7 +17,7 @@ import (
 )
 
 type HealthChecker interface {
-	EvaluateObjects(ctx context.Context, objects []K8sObject) ([]ObjectStatus, error)
+	EvaluateObjects(ctx context.Context, objects []K8sObject) []ObjectStatus
 }
 
 // kubeHealthChecker is wrapper type
@@ -41,8 +42,9 @@ func NewKubeHealthChecker() (HealthChecker, error) {
 
 // EvaluateObjects evaluates health of the objects with the kube-health. Returns
 // slice of object statuses.
-func (k *kubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K8sObject) ([]ObjectStatus, error) {
-	statuses := make(map[types.UID]ObjectStatus)
+func (k *kubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K8sObject) []ObjectStatus {
+	statusesMap := make(map[types.UID]ObjectStatus)
+	var unknownStatuses []ObjectStatus
 	for _, o := range objects {
 		gr := schema.GroupResource{Group: o.Group, Resource: o.Resource}
 
@@ -51,19 +53,28 @@ func (k *kubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K8sOb
 			for _, le := range labelExpressions {
 				objStatuses, err := k.evaluator.EvalResourceWithSelector(ctx, gr, o.Namespace, le)
 				if err != nil {
-					return nil, err
+					slog.Warn("Failed to evaluate", "object",
+						fmt.Sprintf("%s.%s", o.Resource, o.Group), "name", o.Name, "namespace", o.Namespace, "error", err)
+					unknownStatuses = append(unknownStatuses, k8sObjectToUnknwonObjectStatus(o))
+					continue
 				}
-				aggregateObjectStatuses(statuses, objStatuses, gr)
+				aggregateObjectStatuses(statusesMap, objStatuses, gr)
 			}
 		} else {
 			objStatuses, err := k.evaluator.EvalResource(ctx, gr, o.Namespace, o.Name)
 			if err != nil {
-				return nil, err
+				slog.Warn("Failed to evaluate", "object",
+					fmt.Sprintf("%s.%s", o.Resource, o.Group), "name", o.Name, "namespace", o.Namespace, "error", err)
+				unknownStatuses = append(unknownStatuses, k8sObjectToUnknwonObjectStatus(o))
+				continue
 			}
-			aggregateObjectStatuses(statuses, objStatuses, gr)
+			aggregateObjectStatuses(statusesMap, objStatuses, gr)
 		}
 	}
-	return slices.Collect(maps.Values(statuses)), nil
+
+	statuses := slices.Collect(maps.Values(statusesMap))
+	statuses = append(statuses, unknownStatuses...)
+	return statuses
 }
 
 func aggregateObjectStatuses(m map[types.UID]ObjectStatus, objectStatuses []status.ObjectStatus, gr schema.GroupResource) {
@@ -81,6 +92,16 @@ func aggregateObjectStatuses(m map[types.UID]ObjectStatus, objectStatuses []stat
 			Progressing:  os.Status().Progressing,
 		}
 		m[os.Object.UID] = objStatus
+	}
+}
+
+func k8sObjectToUnknwonObjectStatus(k8sObj K8sObject) ObjectStatus {
+	return ObjectStatus{
+		Name:         k8sObj.Name,
+		Namespace:    k8sObj.Namespace,
+		Resource:     k8sObj.Resource,
+		HealthStatus: Unknown,
+		Progressing:  false,
 	}
 }
 
