@@ -66,6 +66,9 @@ func (a *alertMatcher) matchingAlertFound(matchLabels map[string][]string) ([]mo
 					filteredMatchingAlerts = append(filteredMatchingAlerts, ma)
 				}
 			}
+			if len(filteredMatchingAlerts) == 0 {
+				return nil, nil, nil
+			}
 			matchingAlerts = filteredMatchingAlerts
 		} else {
 			matchFound := false
@@ -105,7 +108,6 @@ func cleanupLabels(alerts []models.Alert, matchedLabels map[string]string) []mod
 		for key, value := range matchedLabels {
 			if key != "alertname" && key != "severity" && key != "namespace" {
 				cleanAlert[model.LabelName(key)] = model.LabelValue(value)
-
 			}
 		}
 		cleanedAlerts = append(cleanedAlerts, cleanAlert)
