@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strings"
 
 	runtimeclient "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
@@ -39,26 +40,29 @@ func NewAlertLoader() (AlertLoader, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	token, err := readTokenFromFile()
-	if err != nil {
-		return nil, err
-	}
-
-	certs, err := createCertPool()
-	if err != nil {
-		return nil, err
-	}
-
-	defaultRt := api.DefaultRoundTripper.(*http.Transport)
-	defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
+	useTls := strings.HasPrefix(amURLStr, "https://")
 
 	runtime := runtimeclient.New(amURL.Host, path.Join(amURL.Path, "/api/v2"), []string{amURL.Scheme})
-	runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
-		"Bearer", prom_config.NewInlineSecret(string(token)), defaultRt)
-	return &alertLoader{
-		cli: client.New(runtime, strfmt.Default),
-	}, nil
+	if useTls {
+		token, err := readTokenFromFile()
+		if err != nil {
+			return nil, err
+		}
+
+		certs, err := createCertPool()
+		if err != nil {
+			return nil, err
+		}
+		defaultRt := api.DefaultRoundTripper.(*http.Transport)
+		defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
+
+		runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
+			"Bearer", prom_config.NewInlineSecret(string(token)), defaultRt)
+		return &alertLoader{
+			cli: client.New(runtime, strfmt.Default),
+		}, nil
+	}
+	return &alertLoader{cli: client.New(runtime, strfmt.Default)}, nil
 }
 
 // ActiveAlert reads the active alerts from the Alertmanager

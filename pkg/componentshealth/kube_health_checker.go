@@ -14,6 +14,8 @@ import (
 	"github.com/inecas/kube-health/pkg/status"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type HealthChecker interface {
@@ -26,18 +28,31 @@ type kubeHealthChecker struct {
 	evaluator *eval.Evaluator
 }
 
-// NewKubeHealthChecker creates a new instance of the
-// kubeHealthChecker.
-func NewKubeHealthChecker() (HealthChecker, error) {
-	evaluator, err := khealth.NewHealthEvaluator(nil)
-	if err != nil {
-		return nil, err
-	}
-	khChecker := &kubeHealthChecker{
-		evaluator: evaluator,
+// NewKubeHealthChecker creates a new instance of the kubeHealthChecker.
+// If kubeConfig is provided, it will use that config file; otherwise it will
+// attempt to use in-cluster configuration.
+func NewKubeHealthChecker(kubeConfig string) (HealthChecker, error) {
+	var config *rest.Config
+	var err error
+
+	if kubeConfig != "" {
+		config, err = clientcmd.BuildConfigFromFlags("", kubeConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build config from kubeconfig file %q: %w", kubeConfig, err)
+		}
+	} else {
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+		}
 	}
 
-	return khChecker, nil
+	evaluator, err := khealth.NewHealthEvaluator(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create health evaluator: %w", err)
+	}
+
+	return &kubeHealthChecker{evaluator: evaluator}, nil
 }
 
 // EvaluateObjects evaluates health of the objects with the kube-health. Returns

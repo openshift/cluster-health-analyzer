@@ -9,11 +9,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
 	"gopkg.in/yaml.v2"
 )
+
+const defaultComponentsPath = "/etc/config/components.yaml"
 
 type healthProcessor struct {
 	interval                 time.Duration
@@ -22,21 +25,30 @@ type healthProcessor struct {
 	componentObjectssMetrics prom.MetricSet
 	componentsMetrics        prom.MetricSet
 	khChecker                HealthChecker
+	componentsPath           string
 }
 
 // NewHealthProcessor initializes all the required objects (alert loader, alert matcher and kube-health checker)
 // and creates a new instance of the health processor.
-func NewHealthProcessor(interval time.Duration, alertsMetrics, objectMetrics, componentsMetrics prom.MetricSet) (*healthProcessor, error) {
+func NewHealthProcessor(interval time.Duration,
+	alertsMetrics, objectMetrics, componentsMetrics prom.MetricSet,
+	options common.Options) (*healthProcessor, error) {
 	alertLoader, err := NewAlertLoader()
 	if err != nil {
 		return nil, err
 	}
 
 	alertMatcher := NewAlertMatcher(alertLoader)
-	khChecker, err := NewKubeHealthChecker()
+	khChecker, err := NewKubeHealthChecker(options.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
+
+	componentsPath := defaultComponentsPath
+	if options.ComponentsPath != "" {
+		componentsPath = options.ComponentsPath
+	}
+
 	return &healthProcessor{
 		interval:                 interval,
 		alertMatcher:             alertMatcher,
@@ -44,6 +56,7 @@ func NewHealthProcessor(interval time.Duration, alertsMetrics, objectMetrics, co
 		componentObjectssMetrics: objectMetrics,
 		componentsMetrics:        componentsMetrics,
 		khChecker:                khChecker,
+		componentsPath:           componentsPath,
 	}, nil
 }
 
@@ -54,7 +67,7 @@ func (p *healthProcessor) Start(ctx context.Context) {
 
 // Run periodically runs the processor and blocks until the provided context is done.
 func (p *healthProcessor) Run(ctx context.Context) {
-	conf, err := loadConfig("/etc/config/components.yaml")
+	conf, err := loadConfig(p.componentsPath)
 	if err != nil {
 		slog.Error("Failed to load config ", "error", err)
 		return
@@ -75,7 +88,7 @@ func (p *healthProcessor) Run(ctx context.Context) {
 	}
 }
 
-// loadConfig reads the mounted "/etc/config/components.yaml" file
+// loadConfig reads the file
 // and unmarshals the component config.
 func loadConfig(filePath string) (*ComponentsConfig, error) {
 	conf := &ComponentsConfig{}
@@ -87,6 +100,7 @@ func loadConfig(filePath string) (*ComponentsConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("Successfully loaded components definition from ", "path", filePath)
 	return conf, nil
 }
 

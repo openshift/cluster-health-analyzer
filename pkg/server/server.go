@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/componentshealth"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
@@ -62,14 +63,15 @@ type Server interface {
 
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
-func StartServer(interval time.Duration, prometheusURL string, server Server, disableComponentsHealth bool, disableIncidents bool) {
+func StartServer(interval time.Duration, server Server, options common.Options) {
 	slog.Info("Starting server")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if !disableComponentsHealth {
-		componentsProc, err := componentshealth.NewHealthProcessor(interval, componentHealthAlerts, componentHealthObjects, componentsHealth)
+	if !options.DisableComponentsHealth {
+		componentsProc, err := componentshealth.NewHealthProcessor(interval,
+			componentHealthAlerts, componentHealthObjects, componentsHealth, options)
 		if err != nil {
 			slog.Info("Failed to create component procesor, terminating", "err", err)
 			return
@@ -79,8 +81,8 @@ func StartServer(interval time.Duration, prometheusURL string, server Server, di
 		slog.Info("Components health evaluation is disabled")
 	}
 
-	if !disableIncidents {
-		processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, groupSeverityCountMetrics, interval, prometheusURL)
+	if !options.DisableIncidents {
+		processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, groupSeverityCountMetrics, interval, options.PromURL)
 		if err != nil {
 			slog.Error("Failed to create processor, terminating", "err", err)
 			return
