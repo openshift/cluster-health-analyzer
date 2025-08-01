@@ -98,8 +98,8 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 	for _, v := range dataVec {
 		alertSeverity := v.Metric["src_severity"]
 		alertName := v.Metric["src_alertname"]
-		if alertSeverity == "none" || alertSeverity == "info" {
-			slog.Debug("Skipping low severity ", "alert", alertName, "severity", alertSeverity)
+		if alertSeverity == "none" {
+			slog.Debug("Skipping alerts with severity ", "alert", alertName, "severity", alertSeverity)
 			continue
 		}
 		labels := common.SrcLabels(v.Metric)
@@ -147,9 +147,9 @@ func getTokenFromCtx(ctx context.Context) (string, error) {
 // some starting time) and then maps (the alert identifier is composed by name and namespace)
 // the active alerts to the provided map of incidents. It returns slice of the incidents.
 func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, promAPI v1.API) []Incident {
-	v, _, err := promAPI.Query(ctx, `min_over_time(timestamp(ALERTS{alertstate="firing"})[15d:1m])`, time.Now())
+	v, _, err := promAPI.Query(ctx, `min_over_time(timestamp(ALERTS)[15d:1m])`, time.Now())
 	if err != nil {
-		slog.Error("Failed to query firing alerts", "error", err)
+		slog.Error("Failed to query alerts", "error", err)
 		return nil
 	}
 
