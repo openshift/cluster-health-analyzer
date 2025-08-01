@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/server"
 )
 
@@ -33,7 +34,7 @@ func (s APIServer) Start(ctx context.Context) error {
 	return s.PrepareRun().RunWithContext(ctx)
 }
 
-func buildServer(o options) (server.Server, error) {
+func buildServer(o common.Options) (server.Server, error) {
 	config, err := buildServerConfig(o)
 	if err != nil {
 		return nil, err
@@ -54,7 +55,7 @@ func buildServer(o options) (server.Server, error) {
 // Its main responsibility is to configure secure serving and
 // authentication/authorization.  and fulfill the minimum requirements for a
 // generic API server.
-func buildServerConfig(o options) (*genericapiserver.Config, error) {
+func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 	// We need kubeClient only when authentication/authorization is enabled.
 	var kubeClient *kubernetes.Clientset
 

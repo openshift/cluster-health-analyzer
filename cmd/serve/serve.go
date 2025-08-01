@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 
 	genericoptions "k8s.io/apiserver/pkg/server/options"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/server"
 )
 
@@ -32,31 +32,15 @@ func newServeCmd() *cobra.Command {
 
 			slog.Info("Parameters", "refresh-interval", interval, "prom-url", opts.PromURL)
 
-			server.StartServer(interval, opts.PromURL, apiServer)
+			server.StartServer(interval, apiServer, opts)
 		},
 	}
-	cmd.Flags().AddFlagSet(opts.flags())
+	cmd.Flags().AddFlagSet(opts.Flags())
 	return cmd
 }
 
-type options struct {
-	// Refresh interval in seconds.
-	RefreshInterval int
-
-	PromURL string
-
-	// Path to the kube-config file.
-	Kubeconfig string
-
-	CertFile string
-	CertKey  string
-
-	// Only to be used to for testing.
-	DisableAuthForTesting bool
-}
-
 // newOptions initializes default values for the command options.
-func newOptions() options {
+func newOptions() common.Options {
 	refreshInterval := 30
 	if env, ok := os.LookupEnv("REFRESH_INTERVAL"); ok {
 		refreshInterval, _ = strconv.Atoi(env)
@@ -70,26 +54,8 @@ func newOptions() options {
 	secureServingOptions := genericoptions.NewSecureServingOptions().WithLoopback()
 	secureServingOptions.BindPort = 8443
 
-	return options{
+	return common.Options{
 		RefreshInterval: refreshInterval,
 		PromURL:         promURL,
 	}
-}
-
-// flags returns supported cli flags for the options.
-func (o *options) flags() *pflag.FlagSet {
-	fs := &pflag.FlagSet{}
-	fs.IntVarP(&o.RefreshInterval, "refresh-interval", "i", o.RefreshInterval,
-		"Refresh interval in seconds")
-	fs.StringVarP(&o.PromURL, "prom-url", "u", o.PromURL,
-		"URL of the Prometheus server")
-	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig,
-		"The path to the kubeconfig (defaults to in-cluster config)")
-
-	fs.StringVar(&o.CertFile, "tls-cert-file", "", "The path to the server certificate")
-	fs.StringVar(&o.CertKey, "tls-private-key-file", "", "The path to the server key")
-
-	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
-		"Flag for testing purposes to disable auth")
-	return fs
 }
