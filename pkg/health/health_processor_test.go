@@ -1,7 +1,8 @@
-package componentshealth
+package health
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/assert/yaml"
 )
 
 func TestEvaluateComponentsHealth(t *testing.T) {
@@ -577,4 +579,19 @@ func (m *mockKubeHealthChecker) EvaluateObjects(ctx context.Context, objects []K
 	}
 
 	return objectStatuses
+}
+
+// loadConfig reads the file
+// and unmarshals the component config.
+func loadConfig(filePath string) (*ComponentsConfig, error) {
+	conf := &ComponentsConfig{}
+	cData, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	err = yaml.Unmarshal(cData, conf)
+	if err != nil {
+		return nil, err
+	}
+	return conf, nil
 }

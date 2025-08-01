@@ -1,4 +1,4 @@
-package componentshealth
+package health
 
 import (
 	"github.com/inecas/kube-health/pkg/status"
@@ -103,7 +103,7 @@ func (c *ComponentHealth) AddChild(ch *ComponentHealth) *ComponentHealth {
 	return c
 }
 
-func (c *ComponentHealth) HasChilds() bool {
+func (c *ComponentHealth) HasChildren() bool {
 	return len(c.childComponents) > 0
 }
 

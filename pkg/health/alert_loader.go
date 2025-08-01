@@ -1,4 +1,4 @@
-package componentshealth
+package health
 
 import (
 	"crypto/tls"
