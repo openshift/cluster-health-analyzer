@@ -93,14 +93,10 @@ func (p *healthProcessor) evaluateComponentsHealth(ctx context.Context, componen
 func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (*ComponentHealth, error) {
 	ch := ComponentHealth{name: c.Name}
 
-	worstChildStatus := OK
 	for _, child := range c.ChildComponents {
 		childHealth, err := p.evaluateComponent(ctx, &child)
 		if err != nil {
 			return nil, err
-		}
-		if childHealth.healthStatus > worstChildStatus {
-			worstChildStatus = childHealth.healthStatus
 		}
 		ch.AddChild(childHealth)
 	}
@@ -108,9 +104,9 @@ func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (
 	objectStatuses := p.khChecker.EvaluateObjects(ctx, c.Objects)
 	alerts, alertsErr := p.alertMatcher.evaluateAlerts(c.AlertsSelectors)
 	ch.alertsErr = alertsErr
-	ch.healthStatus = calculateHealthStatus(worstChildStatus, alerts, objectStatuses, alertsErr)
 	ch.alerts = alerts
 	ch.objectStatuses = objectStatuses
+	ch.healthStatus = ch.calculateHealthStatus()
 	return &ch, nil
 }
 
@@ -174,23 +170,31 @@ func componentHealthMetrics(cHealth *ComponentHealth) ([]prom.Metric, []prom.Met
 	return alertMetrics, objectMetrics, componentMetrics
 }
 
-// calculateHealthStatus calculates HealthStatus based on the provided status and alerts
-func calculateHealthStatus(hs HealthStatus, alerts []model.LabelSet, objectStatus []ObjectStatus, alertsErr error) HealthStatus {
-	if hs.IsError() {
+// calculateHealthStatus calculates HealthStatus of the component health
+func (ch *ComponentHealth) calculateHealthStatus() HealthStatus {
+	worstChildStatus := OK
+	for _, child := range ch.childComponents {
+		childStatus := child.calculateHealthStatus()
+		if childStatus > worstChildStatus {
+			worstChildStatus = childStatus
+		}
+	}
+
+	if worstChildStatus.IsError() {
 		return Error
 	}
 
-	if hs.IsWarning() {
+	if worstChildStatus.IsWarning() {
 		return Warning
 	}
 
-	if alertsErr != nil {
+	if ch.alertsErr != nil {
 		return Unknown
 	}
 
 	healthStatus := OK
 	// iterate over alerts and check their severity
-	for _, alert := range alerts {
+	for _, alert := range ch.alerts {
 		severity := string(alert["src_severity"])
 		hv := HealthStatus(processor.ParseHealthValue(severity))
 		if hv > healthStatus {
@@ -198,12 +202,11 @@ func calculateHealthStatus(hs HealthStatus, alerts []model.LabelSet, objectStatu
 		}
 	}
 	// iterate over obejcts and check their health status
-	for _, objStatus := range objectStatus {
+	for _, objStatus := range ch.objectStatuses {
 		if objStatus.HealthStatus > healthStatus {
 			healthStatus = objStatus.HealthStatus
 		}
 	}
-
 	return healthStatus
 }
 
