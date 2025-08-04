@@ -32,8 +32,15 @@ func IncidentsTool() mcp.Tool {
 			ReadOnlyHint: &readOnly,
 		},
 		InputSchema: mcp.ToolInputSchema{
-			Type:       "object",
-			Properties: make(map[string]interface{}),
+			Type: "object",
+			Properties: map[string]interface{}{
+				"max_age_hours": map[string]interface{}{
+					"type":        "number",
+					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					"minimum":     1,
+					"maximum":     360,
+				},
+			},
 		},
 	}
 }
@@ -55,10 +62,18 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		return nil, err
 	}
 
+	maxAgeHours := 360 // 15 days default
+
+	if request.Params.Arguments != nil {
+		if ageHours, ok := request.GetArguments()["max_age_hours"].(float64); ok {
+			maxAgeHours = int(ageHours)
+		}
+	}
+
 	promAPI := v1.NewAPI(promClient)
-	timeNow := time.Now().UTC()
+	timeNow := time.Now()
 	queryTimeRange := v1.Range{
-		Start: timeNow.Add(-15 * 24 * time.Hour),
+		Start: timeNow.Add(-time.Duration(maxAgeHours) * time.Hour),
 		End:   timeNow,
 		Step:  300 * time.Second,
 	}
@@ -101,21 +116,16 @@ func formatToRFC3339(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
-// processSampleTimeAndStatus calculates the delta between the two samples and if it's greater
-// than the range step then the return status is resolved and endTime is set, otherwise it returns
-// firing status and endTime is an empty string.
-func processSampleTimeAndStatus(firstSample, lastSample model.SamplePair, qRange v1.Range) (string, string, string) {
-	status := "firing"
-	startTime := firstSample.Timestamp.Time().UTC()
+// processSampleTime calculates the delta between the two samples and if it's greater
+// than the range step then the endTime is set, otherwise it returns zero endTime
+func processSampleTime(firstSample, lastSample model.SamplePair, qRange v1.Range) (time.Time, time.Time) {
+	startTime := firstSample.Timestamp.Time()
 	var endTime time.Time
 
-	if qRange.End.Sub(lastSample.Timestamp.Time().UTC()).Seconds() > qRange.Step.Seconds() {
-		status = "resolved"
-		endTime = lastSample.Timestamp.Time().UTC()
+	if qRange.End.Sub(lastSample.Timestamp.Time()).Seconds() > qRange.Step.Seconds() {
+		endTime = lastSample.Timestamp.Time()
 	}
-	return formatToRFC3339(startTime),
-		formatToRFC3339(endTime),
-		status
+	return startTime, endTime
 }
 
 // transformPromValueToIncident transforms the metrics data to map of incidents
@@ -136,7 +146,7 @@ func transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string
 
 		lastSample := v.Values[len(v.Values)-1]
 		firstSample := v.Values[0]
-		startTime, endTime, status := processSampleTimeAndStatus(firstSample, lastSample, qRange)
+		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
 
 		labels := common.SrcLabels(v.Metric)
 		healthyVal := processor.HealthValue(lastSample.Value)
@@ -147,26 +157,43 @@ func transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string
 			existingInc.ComponentsSet[component] = struct{}{}
 			existingInc.AffectedComponents = slices.Collect(maps.Keys(existingInc.ComponentsSet))
 			sort.Strings(existingInc.AffectedComponents)
-			existingInc.Alerts = append(existingInc.Alerts, model.LabelSet(labels))
+
+			if _, ok := existingInc.AlertsSet[labels.String()]; !ok {
+				existingInc.AlertsSet[labels.String()] = struct{}{}
+				existingInc.Alerts = append(existingInc.Alerts, labels)
+			}
+
 			if healthyVal > processor.ParseHealthValue(existingInc.Severity) {
 				existingInc.Severity = healthyVal.String()
 			}
-			existingInc.EndTime = endTime
-			existingInc.Status = status
+			err := existingInc.UpdateStartTime(startTime)
+			if err != nil {
+				slog.Error("Failed to parse the start time of an incident ", "error", err)
+				continue
+			}
+			err = existingInc.UpdateEndTime(endTime)
+			if err != nil {
+				slog.Error("Failed to parse the end time of an incident ", "error", err)
+				continue
+			}
+			existingInc.UpdateStatus()
 			incidents[existingInc.GroupId] = existingInc
 		} else {
 			incident := Incident{
 				GroupId:   string(groupId),
 				Severity:  healthyVal.String(),
-				StartTime: startTime,
-				EndTime:   endTime,
-				Status:    status,
+				StartTime: formatToRFC3339(startTime),
+				EndTime:   formatToRFC3339(endTime),
 				ComponentsSet: map[string]struct{}{
 					component: {},
 				},
 				AffectedComponents: []string{component},
 				Alerts:             []model.LabelSet{labels},
+				AlertsSet: map[string]struct{}{
+					labels.String(): struct{}{},
+				},
 			}
+			incident.UpdateStatus()
 			incidents[groupId] = incident
 		}
 	}
@@ -205,13 +232,15 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 		metric := sample.Metric
 		firstSample := sample.Values[0]
 		lastSample := sample.Values[len(sample.Values)-1]
-		startTime, endTime, status := processSampleTimeAndStatus(firstSample, lastSample, qRange)
+		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
 
-		metric[model.LabelName("start_time")] = model.LabelValue(startTime)
-		if endTime != "" {
-			metric[model.LabelName("end_time")] = model.LabelValue(endTime)
+		metric[model.LabelName("start_time")] = model.LabelValue(formatToRFC3339(startTime))
+		if !endTime.IsZero() {
+			metric[model.LabelName("end_time")] = model.LabelValue(formatToRFC3339(endTime))
+			metric[model.LabelName("alertstate")] = model.LabelValue("resolved")
+		} else {
+			metric[model.LabelName("alertstate")] = model.LabelValue("firing")
 		}
-		metric[model.LabelName("alertstate")] = model.LabelValue(status)
 		alerts = append(alerts, model.LabelSet(metric))
 	}
 
