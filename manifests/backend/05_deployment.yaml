@@ -29,6 +29,8 @@ spec:
         env:
           - name: PROM_URL
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
+          - name: ALERTMANAGER_URL
+            value: "https://alertmanager-main.openshift-monitoring.svc.cluster.local:9094"
         securityContext:
           runAsNonRoot: true
           allowPrivilegeEscalation: false
@@ -44,7 +46,12 @@ spec:
         - mountPath: /etc/tls/private
           name: cluster-health-analyzer-tls
           readOnly: true
+        - mountPath: /etc/config
+          name: config
       volumes:
       - name: cluster-health-analyzer-tls
         secret:
           secretName: cluster-health-analyzer-tls
+      - name: config
+        configMap:
+          name: components-config

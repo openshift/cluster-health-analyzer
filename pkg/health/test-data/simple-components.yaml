@@ -1,0 +1,22 @@
+components:
+- name: control-plane
+  children:
+  - name: nodes
+    alerts:
+      selectors:
+      - matchLabels:
+          alertname: ["HighOverallControlPlaneCPU"]
+          test_label: ["foo"]
+  - name: capacity
+    children:
+    - name: cpu
+      alerts:
+        selectors:
+        - matchLabels:
+            alertname: ["KubeCPUOvercommit","HighOverallControlPlaneCPU"]
+    - name: memory
+      alerts:
+        selectors:
+        - matchLabels:
+            alertname: ["HighOverallControlPlaneMemory"]
+  

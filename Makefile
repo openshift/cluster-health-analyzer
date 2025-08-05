@@ -61,6 +61,10 @@ run:
 simulate:
 	go run ./main.go simulate $(if $(SCENARIO),--scenario $(SCENARIO))
 
+.PHONY: build
+build:
+	go build -o bin/cluster-health-analyzer . 
+
 # ----------------
 # Deploy
 # ----------------
