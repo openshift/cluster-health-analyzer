@@ -252,8 +252,9 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			activeAlerts: model.Matrix{
 				&model.SampleStream{
 					Metric: model.Metric{
-						"alertname": "Alert1",
-						"namespace": "foo",
+						"alertname":  "Alert1",
+						"namespace":  "foo",
+						"alertstate": "firing",
 					},
 					Values: []model.SamplePair{
 						{
@@ -268,8 +269,9 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				},
 				&model.SampleStream{
 					Metric: model.Metric{
-						"alertname": "Alert1",
-						"namespace": "bar",
+						"alertname":  "Alert1",
+						"namespace":  "bar",
+						"alertstate": "firing",
 					},
 					Values: []model.SamplePair{
 						{
@@ -297,15 +299,15 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 					GroupId: "1",
 					Alerts: []model.LabelSet{
 						{
-							"alertname":  "Alert1",
+							"name":       "Alert1",
 							"namespace":  "foo",
-							"alertstate": "firing",
+							"state":      "firing",
 							"start_time": model.LabelValue(model.Now().Add(-25 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
-							"alertname":  "Alert1",
+							"name":       "Alert1",
 							"namespace":  "bar",
-							"alertstate": "firing",
+							"state":      "firing",
 							"start_time": model.LabelValue(model.Now().Add(-24 * time.Minute).Time().Format(time.RFC3339)),
 						},
 					},
@@ -317,8 +319,9 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			activeAlerts: model.Matrix{
 				&model.SampleStream{
 					Metric: model.Metric{
-						"alertname": "Alert1",
-						"namespace": "foo",
+						"alertname":  "Alert1",
+						"namespace":  "foo",
+						"alertstate": "resolved",
 					},
 					Values: []model.SamplePair{
 						{
@@ -328,8 +331,9 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				},
 				&model.SampleStream{
 					Metric: model.Metric{
-						"alertname": "Alert1",
-						"namespace": "bar",
+						"alertname":  "Alert1",
+						"namespace":  "bar",
+						"alertstate": "resolved",
 					},
 					Values: []model.SamplePair{
 						{
@@ -339,8 +343,9 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				},
 				&model.SampleStream{
 					Metric: model.Metric{
-						"alertname": "Alert2",
-						"namespace": "bar",
+						"alertname":  "Alert2",
+						"namespace":  "bar",
+						"alertstate": "resolved",
 					},
 					Values: []model.SamplePair{
 						{
@@ -370,16 +375,16 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 					GroupId: "1",
 					Alerts: []model.LabelSet{
 						{
-							"alertname":  "Alert1",
+							"name":       "Alert1",
 							"namespace":  "foo",
-							"alertstate": "resolved",
+							"state":      "resolved",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
-							"alertname":  "Alert1",
+							"name":       "Alert1",
 							"namespace":  "bar",
-							"alertstate": "resolved",
+							"state":      "resolved",
 							"start_time": model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 						},
@@ -389,16 +394,16 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 					GroupId: "2",
 					Alerts: []model.LabelSet{
 						{
-							"alertname":  "Alert1",
+							"name":       "Alert1",
 							"namespace":  "foo",
-							"alertstate": "resolved",
+							"state":      "resolved",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
-							"alertname":  "Alert2",
+							"name":       "Alert2",
 							"namespace":  "bar",
-							"alertstate": "resolved",
+							"state":      "resolved",
 							"start_time": model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 						},

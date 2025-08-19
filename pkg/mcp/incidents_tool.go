@@ -190,7 +190,7 @@ func transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string
 				AffectedComponents: []string{component},
 				Alerts:             []model.LabelSet{labels},
 				AlertsSet: map[string]struct{}{
-					labels.String(): struct{}{},
+					labels.String(): {},
 				},
 			}
 			incident.UpdateStatus()
@@ -229,19 +229,19 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 	var alerts []model.LabelSet
 	for i := range alertData {
 		sample := alertData[i]
-		metric := sample.Metric
+		metric := model.LabelSet(sample.Metric)
 		firstSample := sample.Values[0]
 		lastSample := sample.Values[len(sample.Values)-1]
 		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
 
-		metric[model.LabelName("start_time")] = model.LabelValue(formatToRFC3339(startTime))
+		metric["start_time"] = model.LabelValue(formatToRFC3339(startTime))
 		if !endTime.IsZero() {
-			metric[model.LabelName("end_time")] = model.LabelValue(formatToRFC3339(endTime))
-			metric[model.LabelName("alertstate")] = model.LabelValue("resolved")
+			metric["end_time"] = model.LabelValue(formatToRFC3339(endTime))
+			metric["alertstate"] = "resolved"
 		} else {
-			metric[model.LabelName("alertstate")] = model.LabelValue("firing")
+			metric["alertstate"] = "firing"
 		}
-		alerts = append(alerts, model.LabelSet(metric))
+		alerts = append(alerts, metric)
 	}
 
 	var incidentsSlice []Incident
@@ -252,7 +252,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 			for _, firingAlert := range alerts {
 				match, _ := subsetMatcher.Matches(firingAlert)
 				if match {
-					updatedAlerts = append(updatedAlerts, firingAlert)
+					updatedAlerts = append(updatedAlerts, cleanupLabels(firingAlert))
 				}
 			}
 		}
@@ -260,4 +260,17 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 		incidentsSlice = append(incidentsSlice, inc)
 	}
 	return incidentsSlice
+}
+
+// cleanupLabels removes and renames some of the
+// labels from the set and returns new LabelSet
+func cleanupLabels(m model.LabelSet) model.LabelSet {
+	updatedLS := m.Clone()
+	updatedLS["state"] = updatedLS["alertstate"]
+	updatedLS["name"] = updatedLS["alertname"]
+	delete(updatedLS, "__name__")
+	delete(updatedLS, "prometheus")
+	delete(updatedLS, "alertstate")
+	delete(updatedLS, "alertname")
+	return updatedLS
 }
