@@ -266,7 +266,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 // labels from the set and returns new LabelSet
 func cleanupLabels(m model.LabelSet) model.LabelSet {
 	updatedLS := m.Clone()
-	updatedLS["state"] = updatedLS["alertstate"]
+	updatedLS["status"] = updatedLS["alertstate"]
 	updatedLS["name"] = updatedLS["alertname"]
 	delete(updatedLS, "__name__")
 	delete(updatedLS, "prometheus")
