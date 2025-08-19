@@ -17,37 +17,54 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 )
 
-// IncidentsTool create a new MCP tool for the incidents
-func IncidentsTool() mcp.Tool {
+type IncidentTool struct {
+	mcp.Tool
+	consoleURL string
+}
+
+// NewIncidentsTool creates a new MCP tool for the incidents
+func NewIncidentsTool() IncidentTool {
 	readOnly := true
-	return mcp.Tool{
-		Name: "get_incidents",
-		Description: `List the current firing incidents in the cluster. 
+	consoleURL, err := getConsoleURL()
+	if err != nil {
+		slog.Error("Failed to obtain cluster console URL", "error", err)
+	}
+	return IncidentTool{
+		mcp.Tool{
+			Name: "get_incidents",
+			Description: `List the current firing incidents in the cluster. 
 		One incident is a group of related alerts that are likely triggered by the same root cause.
 		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
-		Annotations: mcp.ToolAnnotation{
-			Title:        "Provides information about Incidents in the cluster",
-			ReadOnlyHint: &readOnly,
-		},
-		InputSchema: mcp.ToolInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"max_age_hours": map[string]interface{}{
-					"type":        "number",
-					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
-					"minimum":     1,
-					"maximum":     360,
+			Annotations: mcp.ToolAnnotation{
+				Title:        "Provides information about Incidents in the cluster",
+				ReadOnlyHint: &readOnly,
+			},
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"max_age_hours": map[string]interface{}{
+						"type":        "number",
+						"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+						"minimum":     1,
+						"maximum":     360,
+					},
 				},
 			},
 		},
+		consoleURL,
 	}
 }
 
 // IncidentsHandler is the main handler for the Incidents. It connects to the
 // in-cluster Prometheus and queries the Incidents metrics.
-func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	slog.Info("Incidents tool received request with ", "params", request.Params, "and arguments ", request.Params.Arguments)
 	token, err := getTokenFromCtx(ctx)
 	if err != nil {
@@ -86,7 +103,7 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		slog.Warn("Prometheus query response", "warning", warning)
 	}
 
-	incidentsMap, err := transformPromValueToIncident(val, queryTimeRange)
+	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
 		return nil, err
@@ -129,7 +146,7 @@ func processSampleTime(firstSample, lastSample model.SamplePair, qRange v1.Range
 }
 
 // transformPromValueToIncident transforms the metrics data to map of incidents
-func transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string]Incident, error) {
+func (i *IncidentTool) transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string]Incident, error) {
 	dataVec, ok := data.(model.Matrix)
 	if !ok {
 		return nil, fmt.Errorf("cannot convert data to Prometheus model.Vector type")
@@ -192,6 +209,9 @@ func transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string
 				AlertsSet: map[string]struct{}{
 					labels.String(): {},
 				},
+			}
+			if i.consoleURL != "" {
+				incident.URL = fmt.Sprintf("%s/monitoring/incidents?groupId=%s", i.consoleURL, groupId)
 			}
 			incident.UpdateStatus()
 			incidents[groupId] = incident
@@ -273,4 +293,33 @@ func cleanupLabels(m model.LabelSet) model.LabelSet {
 	delete(updatedLS, "alertstate")
 	delete(updatedLS, "alertname")
 	return updatedLS
+}
+
+// getConsoleURL tries to read consoleURL from the "cluster" consoles.config.openshift.io
+// resource
+func getConsoleURL() (string, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return "", err
+	}
+	cli, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return "", err
+	}
+
+	unstConsole, err := cli.Resource(
+		schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "consoles"}).
+		Get(context.Background(), "cluster", metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	consoleURL, ok, err := unstructured.NestedString(unstConsole.Object, "status", "consoleURL")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("cannot find consoleURL attribute in the 'cluster' console.config.openshift.io resource")
+	}
+
+	return consoleURL, nil
 }

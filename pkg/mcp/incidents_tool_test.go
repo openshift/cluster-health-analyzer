@@ -229,7 +229,8 @@ func TestTransformPromValueToIncident(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			incidents, err := transformPromValueToIncident(tt.testInput, v1.Range{
+			testTool := IncidentTool{}
+			incidents, err := testTool.transformPromValueToIncident(tt.testInput, v1.Range{
 				Start: time.Now().Add(-30 * time.Minute),
 				End:   time.Now(),
 				Step:  300 * time.Second,
