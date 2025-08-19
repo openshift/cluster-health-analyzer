@@ -32,8 +32,15 @@ func IncidentsTool() mcp.Tool {
 			ReadOnlyHint: &readOnly,
 		},
 		InputSchema: mcp.ToolInputSchema{
-			Type:       "object",
-			Properties: make(map[string]interface{}),
+			Type: "object",
+			Properties: map[string]interface{}{
+				"max_age_hours": map[string]interface{}{
+					"type":        "number",
+					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					"minimum":     1,
+					"maximum":     360,
+				},
+			},
 		},
 	}
 }
@@ -55,8 +62,22 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		return nil, err
 	}
 
+	maxAgeHours := 360 // 15 days default
+
+	if request.Params.Arguments != nil {
+		if ageHours, ok := request.GetArguments()["max_age_hours"].(float64); ok {
+			maxAgeHours = int(ageHours)
+		}
+	}
+
 	promAPI := v1.NewAPI(promClient)
-	val, warning, err := promAPI.Query(ctx, processor.ClusterHealthComponentsMap, time.Now())
+	timeNow := time.Now()
+	queryTimeRange := v1.Range{
+		Start: timeNow.Add(-time.Duration(maxAgeHours) * time.Hour),
+		End:   timeNow,
+		Step:  300 * time.Second,
+	}
+	val, warning, err := promAPI.QueryRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange)
 	if err != nil {
 		slog.Error("Recieved error response from Prometheus", "error", err)
 		return nil, err
@@ -65,13 +86,13 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		slog.Warn("Prometheus query response", "warning", warning)
 	}
 
-	incidentsMap, err := transformPromValueToIncident(val)
+	incidentsMap, err := transformPromValueToIncident(val, queryTimeRange)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
 		return nil, err
 	}
 
-	incidents := getAlertDataForIncidents(ctx, incidentsMap, promAPI)
+	incidents := getAlertDataForIncidents(ctx, incidentsMap, promAPI, queryTimeRange)
 	r := Response{
 		Incidents: Incidents{
 			Total:     len(incidents),
@@ -87,9 +108,29 @@ func IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	return mcp.NewToolResultText(string(data)), nil
 }
 
+// formatToRFC3339 formats a time to RFC3339 string, returns empty string for zero time
+func formatToRFC3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+// processSampleTime calculates the delta between the two samples and if it's greater
+// than the range step then the endTime is set, otherwise it returns zero endTime
+func processSampleTime(firstSample, lastSample model.SamplePair, qRange v1.Range) (time.Time, time.Time) {
+	startTime := firstSample.Timestamp.Time()
+	var endTime time.Time
+
+	if qRange.End.Sub(lastSample.Timestamp.Time()).Seconds() > qRange.Step.Seconds() {
+		endTime = lastSample.Timestamp.Time()
+	}
+	return startTime, endTime
+}
+
 // transformPromValueToIncident transforms the metrics data to map of incidents
-func transformPromValueToIncident(data model.Value) (map[string]Incident, error) {
-	dataVec, ok := data.(model.Vector)
+func transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string]Incident, error) {
+	dataVec, ok := data.(model.Matrix)
 	if !ok {
 		return nil, fmt.Errorf("cannot convert data to Prometheus model.Vector type")
 	}
@@ -98,12 +139,17 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 	for _, v := range dataVec {
 		alertSeverity := v.Metric["src_severity"]
 		alertName := v.Metric["src_alertname"]
-		if alertSeverity == "none" || alertSeverity == "info" {
-			slog.Debug("Skipping low severity ", "alert", alertName, "severity", alertSeverity)
+		if alertSeverity == "none" {
+			slog.Debug("Skipping unknown severity ", "alert", alertName, "severity", alertSeverity)
 			continue
 		}
+
+		lastSample := v.Values[len(v.Values)-1]
+		firstSample := v.Values[0]
+		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
+
 		labels := common.SrcLabels(v.Metric)
-		healthyVal := processor.HealthValue(v.Value)
+		healthyVal := processor.HealthValue(lastSample.Value)
 		groupId := string(v.Metric["group_id"])
 		component := string(v.Metric["component"])
 
@@ -111,22 +157,44 @@ func transformPromValueToIncident(data model.Value) (map[string]Incident, error)
 			existingInc.ComponentsSet[component] = struct{}{}
 			existingInc.AffectedComponents = slices.Collect(maps.Keys(existingInc.ComponentsSet))
 			sort.Strings(existingInc.AffectedComponents)
-			existingInc.Alerts = append(existingInc.Alerts, model.LabelSet(labels))
+
+			if _, ok := existingInc.AlertsSet[labels.String()]; !ok {
+				existingInc.AlertsSet[labels.String()] = struct{}{}
+				existingInc.Alerts = append(existingInc.Alerts, labels)
+			}
+
 			if healthyVal > processor.ParseHealthValue(existingInc.Severity) {
 				existingInc.Severity = healthyVal.String()
 			}
+			err := existingInc.UpdateStartTime(startTime)
+			if err != nil {
+				slog.Error("Failed to parse the start time of an incident ", "error", err)
+				continue
+			}
+			err = existingInc.UpdateEndTime(endTime)
+			if err != nil {
+				slog.Error("Failed to parse the end time of an incident ", "error", err)
+				continue
+			}
+			existingInc.UpdateStatus()
 			incidents[existingInc.GroupId] = existingInc
 		} else {
-			incidents[groupId] = Incident{
-				GroupId:  string(groupId),
-				Severity: healthyVal.String(),
-				Status:   "firing",
+			incident := Incident{
+				GroupId:   string(groupId),
+				Severity:  healthyVal.String(),
+				StartTime: formatToRFC3339(startTime),
+				EndTime:   formatToRFC3339(endTime),
 				ComponentsSet: map[string]struct{}{
 					component: {},
 				},
 				AffectedComponents: []string{component},
 				Alerts:             []model.LabelSet{labels},
+				AlertsSet: map[string]struct{}{
+					labels.String(): {},
+				},
 			}
+			incident.UpdateStatus()
+			incidents[groupId] = incident
 		}
 	}
 	return incidents, nil
@@ -146,52 +214,63 @@ func getTokenFromCtx(ctx context.Context) (string, error) {
 // getAlertDataForIncidents queries Prometheus for firing alerts from the last 15 days (to have
 // some starting time) and then maps (the alert identifier is composed by name and namespace)
 // the active alerts to the provided map of incidents. It returns slice of the incidents.
-func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, promAPI v1.API) []Incident {
-	v, _, err := promAPI.Query(ctx, `min_over_time(timestamp(ALERTS{alertstate="firing"})[15d:1m])`, time.Now())
+func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, promAPI v1.API, qRange v1.Range) []Incident {
+	v, _, err := promAPI.QueryRange(ctx, `ALERTS{alertstate!="pending"}`, qRange)
 	if err != nil {
 		slog.Error("Failed to query firing alerts", "error", err)
 		return nil
 	}
-
-	alertData, ok := v.(model.Vector)
+	alertData, ok := v.(model.Matrix)
 	if !ok {
 		slog.Error("Failed to convert alert data")
 		return nil
 	}
 
-	var firingAlerts []model.LabelSet
+	var alerts []model.LabelSet
 	for i := range alertData {
 		sample := alertData[i]
-		metric := sample.Metric
-		alertStartTime := time.Unix(int64(sample.Value), 0).UTC().Format(time.RFC3339)
-		metric[model.LabelName("start_time")] = model.LabelValue(alertStartTime)
-		firingAlerts = append(firingAlerts, model.LabelSet(metric))
+		metric := model.LabelSet(sample.Metric)
+		firstSample := sample.Values[0]
+		lastSample := sample.Values[len(sample.Values)-1]
+		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
+
+		metric["start_time"] = model.LabelValue(formatToRFC3339(startTime))
+		if !endTime.IsZero() {
+			metric["end_time"] = model.LabelValue(formatToRFC3339(endTime))
+			metric["alertstate"] = "resolved"
+		} else {
+			metric["alertstate"] = "firing"
+		}
+		alerts = append(alerts, metric)
 	}
+
 	var incidentsSlice []Incident
 	for _, inc := range incidents {
 		var updatedAlerts []model.LabelSet
-		incidentStartTime := time.Now().UTC()
 		for _, alertInIncident := range inc.Alerts {
 			subsetMatcher := common.LabelsSubsetMatcher{Labels: alertInIncident}
-			for _, firingAlert := range firingAlerts {
+			for _, firingAlert := range alerts {
 				match, _ := subsetMatcher.Matches(firingAlert)
 				if match {
-					updatedAlerts = append(updatedAlerts, firingAlert)
-					startTimeValue := string(firingAlert["start_time"])
-					alertStartTime, err := time.Parse(time.RFC3339, startTimeValue)
-					if err != nil {
-						slog.Error("Failed to convert string to time", "string", startTimeValue, "error", err)
-						continue
-					}
-					if alertStartTime.Before(incidentStartTime) {
-						incidentStartTime = alertStartTime.UTC()
-					}
+					updatedAlerts = append(updatedAlerts, cleanupLabels(firingAlert))
 				}
 			}
 		}
 		inc.Alerts = updatedAlerts
-		inc.StartTime = incidentStartTime.UTC().Format(time.RFC3339)
 		incidentsSlice = append(incidentsSlice, inc)
 	}
 	return incidentsSlice
+}
+
+// cleanupLabels removes and renames some of the
+// labels from the set and returns new LabelSet
+func cleanupLabels(m model.LabelSet) model.LabelSet {
+	updatedLS := m.Clone()
+	updatedLS["status"] = updatedLS["alertstate"]
+	updatedLS["name"] = updatedLS["alertname"]
+	delete(updatedLS, "__name__")
+	delete(updatedLS, "prometheus")
+	delete(updatedLS, "alertstate")
+	delete(updatedLS, "alertname")
+	return updatedLS
 }
