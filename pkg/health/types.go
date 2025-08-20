@@ -13,9 +13,15 @@ type ComponentsConfig struct {
 // as defined in the "external" YAML config
 type Component struct {
 	Name            string          `yaml:"name"`
+	fullName        string          `yaml:"-"`
+	parent          *Component      `yaml:"-"`
 	Objects         []K8sObject     `yaml:"objects"`
 	ChildComponents []Component     `yaml:"children"`
 	AlertsSelectors AlertsSelectors `yaml:"alerts"`
+}
+
+func (c *Component) AddParent(p *Component) {
+	c.parent = p
 }
 
 // K8sObject is a type representing

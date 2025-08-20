@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -13,6 +14,43 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
 )
+
+var clusterOperatorNames = []string{
+	"authentication",
+	"baremetal",
+	"cloud-controller-manager",
+	"cloud-credential",
+	"cluster-autoscaler",
+	"config-operator",
+	"console",
+	"control-plane-machine-set",
+	"csi-snapshot-controller",
+	"dns",
+	"etcd",
+	"image-registry",
+	"ingress",
+	"insights",
+	"kube-apiserver",
+	"kube-controller-manager",
+	"kube-scheduler",
+	"kube-storage-version-migrator",
+	"machine-api",
+	"machine-approver",
+	"machine-config",
+	"marketplace",
+	"monitoring",
+	"network",
+	"node-tuning",
+	"olm",
+	"openshift-apiserver",
+	"openshift-controller-manager",
+	"openshift-samples",
+	"operator-lifecycle-manager",
+	"operator-lifecycle-manager-catalog",
+	"operator-lifecycle-manager-packageserver",
+	"service-ca",
+	"storage",
+}
 
 type healthProcessor struct {
 	interval                time.Duration
@@ -92,23 +130,38 @@ func (p *healthProcessor) evaluateComponentsHealth(ctx context.Context, componen
 // evaluateComponent evaluates the health of the provided component
 // and recursively the health of all its child components.
 func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (*ComponentHealth, error) {
-	ch := ComponentHealth{name: c.Name}
+	cHealth := ComponentHealth{name: c.Name}
 
-	for _, child := range c.ChildComponents {
-		childHealth, err := p.evaluateComponent(ctx, &child)
+	if c.parent != nil {
+		c.fullName = fmt.Sprintf("%s.%s", c.parent.fullName, c.Name)
+	} else {
+		c.fullName = c.Name
+	}
+
+	for i := range c.ChildComponents {
+		ch := &c.ChildComponents[i]
+		ch.AddParent(c)
+		childHealth, err := p.evaluateComponent(ctx, ch)
 		if err != nil {
 			return nil, err
 		}
-		ch.AddChild(childHealth)
+		cHealth.AddChild(childHealth)
+	}
+	if slices.Contains(clusterOperatorNames, c.Name) && c.parent.fullName == "control-plane.operators" {
+		c.Objects = append(c.Objects, K8sObject{
+			Group:    "config.openshift.io",
+			Name:     c.Name,
+			Resource: "clusteroperators",
+		})
 	}
 
 	objectStatuses := p.khChecker.EvaluateObjects(ctx, c.Objects)
 	alerts, alertsErr := p.alertMatcher.evaluateAlerts(c.AlertsSelectors)
-	ch.alertsErr = alertsErr
-	ch.alerts = alerts
-	ch.objectStatuses = objectStatuses
-	ch.healthStatus = ch.calculateHealthStatus()
-	return &ch, nil
+	cHealth.alertsErr = alertsErr
+	cHealth.alerts = alerts
+	cHealth.objectStatuses = objectStatuses
+	cHealth.healthStatus = cHealth.calculateHealthStatus()
+	return &cHealth, nil
 }
 
 // updateAllMetrics updates all the metrics - for active alerts, for object statuses
