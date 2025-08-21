@@ -23,8 +23,7 @@ type Incident struct {
 	Status    string `json:"status"`
 	EndTime   string `json:"end_time"`
 
-	// TODO
-	URL                string              `json:"-"`
+	URL                string              `json:"url_details"`
 	Alerts             []model.LabelSet    `json:"alerts"`
 	AlertsSet          map[string]struct{} `json:"-"`
 	AffectedComponents []string            `json:"affected_components"`
