@@ -13,44 +13,11 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 )
-
-var clusterOperatorNames = []string{
-	"authentication",
-	"baremetal",
-	"cloud-controller-manager",
-	"cloud-credential",
-	"cluster-autoscaler",
-	"config-operator",
-	"console",
-	"control-plane-machine-set",
-	"csi-snapshot-controller",
-	"dns",
-	"etcd",
-	"image-registry",
-	"ingress",
-	"insights",
-	"kube-apiserver",
-	"kube-controller-manager",
-	"kube-scheduler",
-	"kube-storage-version-migrator",
-	"machine-api",
-	"machine-approver",
-	"machine-config",
-	"marketplace",
-	"monitoring",
-	"network",
-	"node-tuning",
-	"olm",
-	"openshift-apiserver",
-	"openshift-controller-manager",
-	"openshift-samples",
-	"operator-lifecycle-manager",
-	"operator-lifecycle-manager-catalog",
-	"operator-lifecycle-manager-packageserver",
-	"service-ca",
-	"storage",
-}
 
 type healthProcessor struct {
 	interval                time.Duration
@@ -60,6 +27,7 @@ type healthProcessor struct {
 	componentsMetrics       prom.MetricSet
 	khChecker               HealthChecker
 	config                  *ComponentsConfig
+	clusterOperatorNames    []string
 }
 
 // NewHealthProcessor initializes all the required objects (alert loader, alert matcher and kube-health checker)
@@ -73,8 +41,18 @@ func NewHealthProcessor(interval time.Duration,
 		return nil, err
 	}
 
+	restConfig, err := common.GetKubeConfig(kubeConfigPath)
+	if err != nil {
+		return nil, err
+	}
+
 	alertMatcher := NewAlertMatcher(alertLoader)
-	khChecker, err := NewKubeHealthChecker(kubeConfigPath)
+	khChecker, err := NewKubeHealthChecker(restConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	clusterOperatorNames, err := getClusterOperatorNames(restConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +65,7 @@ func NewHealthProcessor(interval time.Duration,
 		componentsMetrics:       componentsMetrics,
 		khChecker:               khChecker,
 		config:                  config,
+		clusterOperatorNames:    clusterOperatorNames,
 	}, nil
 }
 
@@ -147,7 +126,7 @@ func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (
 		}
 		cHealth.AddChild(childHealth)
 	}
-	if slices.Contains(clusterOperatorNames, c.Name) && c.parent.fullName == "control-plane.operators" {
+	if slices.Contains(p.clusterOperatorNames, c.Name) && c.parent.fullName == "control-plane.operators" {
 		c.Objects = append(c.Objects, K8sObject{
 			Group:    "config.openshift.io",
 			Name:     c.Name,
@@ -312,4 +291,27 @@ func fullComponentName(c *ComponentHealth) string {
 		name = fmt.Sprintf("%s.%s", pName, name)
 	}
 	return name
+}
+
+// getClusterOperatorNames reads clusteroperator names from the cluster API
+func getClusterOperatorNames(restConfig *rest.Config) ([]string, error) {
+	cli, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	coList, err := cli.Resource(schema.GroupVersionResource{
+		Group:    "config.openshift.io",
+		Version:  "v1",
+		Resource: "clusteroperators",
+	}).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var coNames []string
+	for _, it := range coList.Items {
+		coNames = append(coNames, it.GetName())
+	}
+
+	return coNames, nil
 }
