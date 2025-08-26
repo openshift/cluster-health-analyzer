@@ -76,6 +76,8 @@ func (p *healthProcessor) Start(ctx context.Context) {
 
 // Run periodically runs the processor and blocks until the provided context is done.
 func (p *healthProcessor) Run(ctx context.Context) {
+	p.updateComponentTree(p.config.Components)
+
 	healthStatuses := p.evaluateComponentsHealth(ctx, p.config.Components)
 	p.updateAllMetrics(createHealthMetrics(healthStatuses))
 	ticker := time.NewTicker(p.interval)
@@ -111,27 +113,12 @@ func (p *healthProcessor) evaluateComponentsHealth(ctx context.Context, componen
 func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (*ComponentHealth, error) {
 	cHealth := ComponentHealth{name: c.Name}
 
-	if c.parent != nil {
-		c.fullName = fmt.Sprintf("%s.%s", c.parent.fullName, c.Name)
-	} else {
-		c.fullName = c.Name
-	}
-
-	for i := range c.ChildComponents {
-		ch := &c.ChildComponents[i]
-		ch.AddParent(c)
-		childHealth, err := p.evaluateComponent(ctx, ch)
+	for _, ch := range c.ChildComponents {
+		childHealth, err := p.evaluateComponent(ctx, &ch)
 		if err != nil {
 			return nil, err
 		}
 		cHealth.AddChild(childHealth)
-	}
-	if slices.Contains(p.clusterOperatorNames, c.Name) && c.parent.fullName == "control-plane.operators" {
-		c.Objects = append(c.Objects, K8sObject{
-			Group:    "config.openshift.io",
-			Name:     c.Name,
-			Resource: "clusteroperators",
-		})
 	}
 
 	objectStatuses := p.khChecker.EvaluateObjects(ctx, c.Objects)
@@ -314,4 +301,46 @@ func getClusterOperatorNames(restConfig *rest.Config) ([]string, error) {
 	}
 
 	return coNames, nil
+}
+
+func (p *healthProcessor) updateComponentTree(components []Component) {
+	for i := range components {
+		c := &components[i]
+		p.updateFullNameAndClusterOperatorObjects(c)
+	}
+}
+
+// updateFullNameAndClusterOperatorObjects traverses the components tree,
+// creating a full name for each component and,
+// if the component is a cluster operator, adding the corresponding object.
+func (p *healthProcessor) updateFullNameAndClusterOperatorObjects(c *Component) {
+	if c.parent != nil {
+		c.fullName = fmt.Sprintf("%s.%s", c.parent.fullName, c.Name)
+	} else {
+		c.fullName = c.Name
+	}
+
+	if slices.Contains(p.clusterOperatorNames, c.Name) && c.parent.fullName == "control-plane.operators" {
+		c.Objects = append(c.Objects, K8sObject{
+			Group:    "config.openshift.io",
+			Name:     c.Name,
+			Resource: "clusteroperators",
+		})
+	}
+
+	if c.fullName == "control-plane.operators" {
+		for _, coName := range p.clusterOperatorNames {
+			if c.HasChildWithName(coName) {
+				continue
+			}
+			coSyntComp := Component{Name: coName}
+			c.ChildComponents = append(c.ChildComponents, coSyntComp)
+		}
+	}
+
+	for i := range c.ChildComponents {
+		ch := &c.ChildComponents[i]
+		ch.AddParent(c)
+		p.updateFullNameAndClusterOperatorObjects(ch)
+	}
 }

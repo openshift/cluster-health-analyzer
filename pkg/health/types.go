@@ -24,6 +24,15 @@ func (c *Component) AddParent(p *Component) {
 	c.parent = p
 }
 
+func (c *Component) HasChildWithName(name string) bool {
+	for _, ch := range c.ChildComponents {
+		if ch.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // K8sObject is a type representing
 // Kubernetes object/resource as defined in the
 // "external" YAML config

@@ -28,44 +28,11 @@ data:
                 alertname: ["HighOverallControlPlaneMemory"]
       - name: operators
         children:
-        - name: authentication
-        - name: baremetal
-        - name: cloud-controller-manager
-        - name: cloud-credential
-        - name: cluster-autoscaler
-        - name: config-operator
-        - name: console
-        - name: control-plane-machine-set
-        - name: csi-snapshot-controller
-        - name: dns
         - name: etcd
           alerts:
             selectors:
             - matchLabels:
                 namespace: ["openshift-etcd","openshift-etcd-operator"]
-        - name: image-registry
-        - name: ingress
-        - name: insights
-        - name: kube-apiserver
-        - name: kube-controller-manager
-        - name: kube-scheduler
-        - name: kube-storage-version-migrator
-        - name: machine-api
-        - name: machine-approver
-        - name: machine-config
-        - name: marketplace
-        - name: monitoring
-        - name: network
-        - name: node-tuning
-        - name: olm
-        - name: openshift-apiserver
-        - name: openshift-controller-manager
-        - name: openshift-samples
-        - name: operator-lifecycle-manager
-        - name: operator-lifecycle-manager-catalog
-        - name: operator-lifecycle-manager-packageserver
-        - name: service-ca
-        - name: storage
     - name: addons
       children:
       - name: kubevirt
