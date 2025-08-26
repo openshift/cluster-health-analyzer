@@ -21,6 +21,7 @@ type ComponentHealthMap struct {
 	SrcLabels model.LabelSet // Identifying labels of the source
 	GroupId   string         // Group ID of the component
 	Health    HealthValue    // Health value of the component
+	Silenced  string         // Whether the alert is silenced or not
 }
 
 // SrcType represents the type of the source.
@@ -151,7 +152,7 @@ func evalMatcherFns(fns []componentMatcherFn, labels model.LabelSet) (
 
 // getLabelsSubset returns a subset of the labels with given keys.
 func getLabelsSubset(m model.LabelSet, keys ...model.LabelName) model.LabelSet {
-	keys = append([]model.LabelName{"namespace", "alertname", "severity"}, keys...)
+	keys = append([]model.LabelName{"namespace", "alertname", "severity", "silenced"}, keys...)
 	return getMapSubset(m, keys...)
 }
 

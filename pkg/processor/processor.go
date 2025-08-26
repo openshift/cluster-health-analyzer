@@ -7,12 +7,17 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-const ClusterHealthComponentsMap = "cluster:health:components:map"
+const (
+	ClusterHealthComponentsMap = "cluster:health:components:map"
+
+	AlertNameLabelKey = "alertname"
+)
 
 // processor is the component responsible for continuously loading alerts from source
 // and coordinates updating the exported metrics.
@@ -31,20 +36,34 @@ type processor struct {
 	interval time.Duration
 
 	loader           *prom.Loader
+	amLoader         alertmanager.AlertLoader
 	groupsCollection *GroupsCollection
 }
 
-func NewProcessor(healthMapMetrics, componentsMetrics prom.MetricSet, groupSeverityCountMetrics prom.MetricSet, interval time.Duration, promURL string) (*processor, error) {
-	promLoader, err := prom.NewLoader(promURL)
+type ProcessorConfig struct {
+	Interval        time.Duration
+	PromURL         string
+	AlertManagerURL string
+}
+
+func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.MetricSet, groupSeverityCountMetrics prom.MetricSet) (*processor, error) {
+	promLoader, err := prom.NewLoader(cfg.PromURL)
 	if err != nil {
 		return nil, err
 	}
+
+	amLoader, err := alertmanager.NewAlertLoader(cfg.AlertManagerURL)
+	if err != nil {
+		return nil, err
+	}
+
 	return &processor{
 		healthMapMetrics:          healthMapMetrics,
 		componentsMetrics:         componentsMetrics,
 		groupSeverityCountMetrics: groupSeverityCountMetrics,
-		interval:                  interval,
+		interval:                  cfg.Interval,
 		loader:                    promLoader,
+		amLoader:                  amLoader,
 	}, nil
 }
 
@@ -158,14 +177,9 @@ func (p *processor) Process(ctx context.Context) error {
 }
 
 func (p *processor) updateHealthMap(ctx context.Context) error {
-	t := time.Now()
-	alerts, err := p.loader.LoadAlerts(ctx, t)
+	alerts, err := p.loadAlerts(ctx, time.Now())
 	if err != nil {
 		return err
-	}
-
-	if p.groupsCollection != nil {
-		alerts = p.assignAlertsToGroups(alerts, t)
 	}
 
 	healthMap := MapAlerts(alerts)
@@ -184,6 +198,49 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 	p.groupSeverityCountMetrics.Update(severityCountsMetrics)
 
 	return nil
+}
+
+func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
+	alerts, err := p.loader.LoadAlerts(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+
+	alerts, err = p.evaluateSilences(alerts)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.groupsCollection != nil {
+		alerts = p.assignAlertsToGroups(alerts, t)
+	}
+
+	return alerts, nil
+}
+
+func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet, error) {
+	// get all silenced alerts from alertmanager
+	silenced, err := p.amLoader.SilencedAlerts()
+	if err != nil {
+		return nil, err
+
+	}
+	// convert slice to temporary map for better lookup
+	silencedAlertsMap := make(map[string]struct{})
+	for _, silencedAlert := range silenced {
+		silencedAlertsMap[silencedAlert.Labels[AlertNameLabelKey]] = struct{}{}
+	}
+
+	for i := range len(alerts) {
+		alertName := string(alerts[i][AlertNameLabelKey])
+		if _, f := silencedAlertsMap[alertName]; f {
+			alerts[i]["silenced"] = "1"
+			continue
+		}
+		alerts[i]["silenced"] = "0"
+	}
+
+	return alerts, nil
 }
 
 func (p *processor) computeSeverityCountMetrics(alertsHealthMap []ComponentHealthMap) []prom.Metric {

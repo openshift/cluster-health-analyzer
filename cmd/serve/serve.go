@@ -30,7 +30,7 @@ func newServeCmd() *cobra.Command {
 				log.Fatal("Error building a server", err)
 			}
 
-			slog.Info("Parameters", "refresh-interval", interval, "prom-url", opts.PromURL)
+			slog.Info("Parameters", "refresh-interval", interval, "prom-url", opts.PromURL, "alertmanager-url", opts.AlertManagerURL)
 
 			server.StartServer(interval, apiServer, opts)
 		},
@@ -51,11 +51,17 @@ func newOptions() common.Options {
 		promURL = value
 	}
 
+	alertManagerURL := "http://localhost:9093"
+	if value, ok := os.LookupEnv("ALERTMANAGER_URL"); ok {
+		alertManagerURL = value
+	}
+
 	secureServingOptions := genericoptions.NewSecureServingOptions().WithLoopback()
 	secureServingOptions.BindPort = 8443
 
 	return common.Options{
 		RefreshInterval: refreshInterval,
 		PromURL:         promURL,
+		AlertManagerURL: alertManagerURL,
 	}
 }

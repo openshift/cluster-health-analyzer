@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
@@ -485,7 +486,7 @@ func TestComponentHealthsToMetrics(t *testing.T) {
 	}
 }
 
-func createTestHealthProcessor(al AlertLoader, healthChecker HealthChecker) healthProcessor {
+func createTestHealthProcessor(al alertmanager.AlertLoader, healthChecker HealthChecker) healthProcessor {
 	alertMatcher := NewAlertMatcher(al)
 	return healthProcessor{
 		khChecker:    healthChecker,
@@ -520,12 +521,17 @@ type nameStatusPair struct {
 }
 
 type MockAlertLoader struct {
-	alerts []models.Alert
-	err    error
+	alerts   []models.Alert
+	silenced []models.Alert
+	err      error
 }
 
 func (m MockAlertLoader) ActiveAlerts() ([]models.Alert, error) {
 	return m.alerts, m.err
+}
+
+func (m MockAlertLoader) SilencedAlerts() ([]models.Alert, error) {
+	return m.silenced, m.err
 }
 
 // ActiveAlertsWithLabels returns only the alerts matching all the provided labels

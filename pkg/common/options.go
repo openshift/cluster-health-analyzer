@@ -6,7 +6,8 @@ type Options struct {
 	// Refresh interval in seconds.
 	RefreshInterval int
 
-	PromURL string
+	PromURL         string
+	AlertManagerURL string
 
 	// Path to the kube-config file.
 	Kubeconfig string
@@ -34,6 +35,8 @@ func (o *Options) Flags() *pflag.FlagSet {
 		"Refresh interval in seconds")
 	fs.StringVarP(&o.PromURL, "prom-url", "u", o.PromURL,
 		"URL of the Prometheus server")
+	fs.StringVar(&o.AlertManagerURL, "alertmanager-url", o.AlertManagerURL,
+		"URL of the AlertManager server")
 	fs.StringVar(&o.Kubeconfig, "kubeconfig", o.Kubeconfig,
 		"The path to the kubeconfig (defaults to in-cluster config)")
 
