@@ -3,6 +3,7 @@ package health
 import (
 	"testing"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
@@ -281,8 +282,8 @@ func TestEvaluateAlerts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockAlertLoader := MockAlertLoader{
-				alerts: []models.Alert{
+			mockAlertLoader := mocks.NewMockAlertLoader(
+				[]models.Alert{
 					{
 						Labels: models.LabelSet{
 							"alertname": "FooAlert",
@@ -307,8 +308,7 @@ func TestEvaluateAlerts(t *testing.T) {
 							"severity":  "warning",
 						},
 					},
-				},
-			}
+				}, nil, nil)
 			testAlertMatcher := NewAlertMatcher(mockAlertLoader)
 			alerts, err := testAlertMatcher.evaluateAlerts(tt.alerts)
 			assert.NoError(t, err)
