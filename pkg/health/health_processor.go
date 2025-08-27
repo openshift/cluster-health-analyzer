@@ -306,7 +306,13 @@ func (p *healthProcessor) finalizeComponentTree(components []Component) []Compon
 	for i := range components {
 		c := &components[i]
 		p.setFullName(c)
-		p.addClusterOperatorObjects(c)
+	}
+
+	controlPlaneOperators := findComponentByName(components, "control-plane.operators")
+	if controlPlaneOperators != nil {
+		p.addClusterOperatorObjects(controlPlaneOperators)
+	} else {
+		slog.Warn("Could not find the \"control-plane.operators\" component. ClusterOperators will not be evaluated!")
 	}
 	return components
 }
@@ -330,28 +336,35 @@ func (p *healthProcessor) setFullName(c *Component) {
 // If there is already some clusteroperator defined then it only appends
 // the corresponding object to it.
 func (p *healthProcessor) addClusterOperatorObjects(c *Component) {
-	for i := range c.ChildComponents {
-		ch := &c.ChildComponents[i]
-		p.addClusterOperatorObjects(ch)
+	for _, coName := range p.clusterOperatorNames {
+		coResource := K8sObject{
+			Group:    "config.openshift.io",
+			Name:     coName,
+			Resource: "clusteroperators",
+		}
+		if ch := c.GetChildByName(coName); ch != nil {
+			ch.Objects = append(ch.Objects, coResource)
+			continue
+		}
+		coSyntComp := Component{
+			Name:     coName,
+			fullName: fmt.Sprintf("%s.%s", c.fullName, coName),
+			Objects:  []K8sObject{coResource},
+		}
+		c.ChildComponents = append(c.ChildComponents, coSyntComp)
 	}
+}
 
-	if c.fullName == "control-plane.operators" {
-		for _, coName := range p.clusterOperatorNames {
-			coResource := K8sObject{
-				Group:    "config.openshift.io",
-				Name:     coName,
-				Resource: "clusteroperators",
-			}
-			if ch := c.GetChildByName(coName); ch != nil {
-				ch.Objects = append(ch.Objects, coResource)
-				continue
-			}
-			coSyntComp := Component{
-				Name:     coName,
-				fullName: fmt.Sprintf("%s.%s", c.fullName, coName),
-				Objects:  []K8sObject{coResource},
-			}
-			c.ChildComponents = append(c.ChildComponents, coSyntComp)
+func findComponentByName(components []Component, name string) *Component {
+	for i := range components {
+		c := &components[i]
+		if c.fullName == name {
+			return c
+		}
+		if found := findComponentByName(c.ChildComponents, name); found != nil {
+			return found
 		}
 	}
+
+	return nil
 }
