@@ -14,23 +14,19 @@ type ComponentsConfig struct {
 type Component struct {
 	Name            string          `yaml:"name"`
 	fullName        string          `yaml:"-"`
-	parent          *Component      `yaml:"-"`
 	Objects         []K8sObject     `yaml:"objects"`
 	ChildComponents []Component     `yaml:"children"`
 	AlertsSelectors AlertsSelectors `yaml:"alerts"`
 }
 
-func (c *Component) AddParent(p *Component) {
-	c.parent = p
-}
-
-func (c *Component) HasChildWithName(name string) bool {
-	for _, ch := range c.ChildComponents {
+func (c *Component) GetChildByName(name string) *Component {
+	for i := range c.ChildComponents {
+		ch := &c.ChildComponents[i]
 		if ch.Name == name {
-			return true
+			return ch
 		}
 	}
-	return false
+	return nil
 }
 
 // K8sObject is a type representing

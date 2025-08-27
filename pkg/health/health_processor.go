@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"slices"
 	"strconv"
 	"time"
 
@@ -76,16 +75,16 @@ func (p *healthProcessor) Start(ctx context.Context) {
 
 // Run periodically runs the processor and blocks until the provided context is done.
 func (p *healthProcessor) Run(ctx context.Context) {
-	p.updateComponentTree(p.config.Components)
+	components := p.finalizeComponentTree(p.config.Components)
 
-	healthStatuses := p.evaluateComponentsHealth(ctx, p.config.Components)
+	healthStatuses := p.evaluateComponentsHealth(ctx, components)
 	p.updateAllMetrics(createHealthMetrics(healthStatuses))
 	ticker := time.NewTicker(p.interval)
 	for {
 		select {
 		case <-ticker.C:
 			slog.Info("Evaluating health of the components")
-			healthStatuses = p.evaluateComponentsHealth(ctx, p.config.Components)
+			healthStatuses = p.evaluateComponentsHealth(ctx, components)
 			p.updateAllMetrics(createHealthMetrics(healthStatuses))
 		case <-ctx.Done():
 			ticker.Stop()
@@ -303,44 +302,56 @@ func getClusterOperatorNames(restConfig *rest.Config) ([]string, error) {
 	return coNames, nil
 }
 
-func (p *healthProcessor) updateComponentTree(components []Component) {
+func (p *healthProcessor) finalizeComponentTree(components []Component) []Component {
 	for i := range components {
 		c := &components[i]
-		p.updateFullNameAndClusterOperatorObjects(c)
+		p.setFullName(c)
+		p.addClusterOperatorObjects(c)
 	}
+	return components
 }
 
-// updateFullNameAndClusterOperatorObjects traverses the components tree,
-// creating a full name for each component and,
-// if the component is a cluster operator, adding the corresponding object.
-func (p *healthProcessor) updateFullNameAndClusterOperatorObjects(c *Component) {
-	if c.parent != nil {
-		c.fullName = fmt.Sprintf("%s.%s", c.parent.fullName, c.Name)
-	} else {
+// setFullName traverses the components tree
+// and sets the full name of each component.
+func (p *healthProcessor) setFullName(c *Component) {
+	if c.fullName == "" {
 		c.fullName = c.Name
-	}
-
-	if slices.Contains(p.clusterOperatorNames, c.Name) && c.parent.fullName == "control-plane.operators" {
-		c.Objects = append(c.Objects, K8sObject{
-			Group:    "config.openshift.io",
-			Name:     c.Name,
-			Resource: "clusteroperators",
-		})
-	}
-
-	if c.fullName == "control-plane.operators" {
-		for _, coName := range p.clusterOperatorNames {
-			if c.HasChildWithName(coName) {
-				continue
-			}
-			coSyntComp := Component{Name: coName}
-			c.ChildComponents = append(c.ChildComponents, coSyntComp)
-		}
 	}
 
 	for i := range c.ChildComponents {
 		ch := &c.ChildComponents[i]
-		ch.AddParent(c)
-		p.updateFullNameAndClusterOperatorObjects(ch)
+		ch.fullName = fmt.Sprintf("%s.%s", c.fullName, ch.Name)
+		p.setFullName(ch)
+	}
+}
+
+// addClusterOperatorObjects traverses the components tree
+// and adds clusteroperator objects to the "control-plane.operators" component.
+// If there is already some clusteroperator defined then it only appends
+// the corresponding object to it.
+func (p *healthProcessor) addClusterOperatorObjects(c *Component) {
+	for i := range c.ChildComponents {
+		ch := &c.ChildComponents[i]
+		p.addClusterOperatorObjects(ch)
+	}
+
+	if c.fullName == "control-plane.operators" {
+		for _, coName := range p.clusterOperatorNames {
+			coResource := K8sObject{
+				Group:    "config.openshift.io",
+				Name:     coName,
+				Resource: "clusteroperators",
+			}
+			if ch := c.GetChildByName(coName); ch != nil {
+				ch.Objects = append(ch.Objects, coResource)
+				continue
+			}
+			coSyntComp := Component{
+				Name:     coName,
+				fullName: fmt.Sprintf("%s.%s", c.fullName, coName),
+				Objects:  []K8sObject{coResource},
+			}
+			c.ChildComponents = append(c.ChildComponents, coSyntComp)
+		}
 	}
 }
