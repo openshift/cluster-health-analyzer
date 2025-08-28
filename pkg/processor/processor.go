@@ -223,8 +223,8 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	silenced, err := p.amLoader.SilencedAlerts()
 	if err != nil {
 		return nil, err
-
 	}
+
 	// convert slice to temporary map for better lookup
 	silencedAlertsMap := make(map[string]struct{})
 	for _, silencedAlert := range silenced {

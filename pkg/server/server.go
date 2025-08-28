@@ -88,7 +88,7 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 		componentsProc, err := health.NewHealthProcessor(interval,
 			componentHealthAlerts, componentHealthObjects, componentsHealth, options.Kubeconfig, conf, options.AlertManagerURL)
 		if err != nil {
-			slog.Info("Failed to create component procesor, terminating", "err", err)
+			slog.Info("Failed to create component processor, terminating", "err", err)
 			return
 		}
 		componentsProc.Start(ctx)
