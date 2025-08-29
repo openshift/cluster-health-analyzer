@@ -177,9 +177,14 @@ func (p *processor) Process(ctx context.Context) error {
 }
 
 func (p *processor) updateHealthMap(ctx context.Context) error {
-	alerts, err := p.loadAlerts(ctx, time.Now())
+	t := time.Now()
+	alerts, err := p.loadAlerts(ctx, t)
 	if err != nil {
 		return err
+	}
+
+	if p.groupsCollection != nil {
+		alerts = p.assignAlertsToGroups(alerts, t)
 	}
 
 	healthMap := MapAlerts(alerts)
@@ -209,10 +214,6 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 	alerts, err = p.evaluateSilences(alerts)
 	if err != nil {
 		return nil, err
-	}
-
-	if p.groupsCollection != nil {
-		alerts = p.assignAlertsToGroups(alerts, t)
 	}
 
 	return alerts, nil
