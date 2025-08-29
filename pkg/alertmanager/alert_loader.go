@@ -1,4 +1,4 @@
-package health
+package alertmanager
 
 import (
 	"crypto/tls"
@@ -27,6 +27,9 @@ type AlertLoader interface {
 	// ActiveAlert reads the active alerts with the provided labels from the Alertmanager
 	// and returns them as a slice.
 	ActiveAlertsWithLabels(labels []string) ([]models.Alert, error)
+	// SilencedAlerts reads silenced alerts from the Alertmanager
+	// and returns them as a slice
+	SilencedAlerts() ([]models.Alert, error)
 }
 
 type alertLoader struct {
@@ -34,13 +37,12 @@ type alertLoader struct {
 }
 
 // NewAlertLoader creates a new client Alermanager API
-func NewAlertLoader() (AlertLoader, error) {
-	amURLStr := os.Getenv("ALERTMANAGER_URL")
-	amURL, err := url.Parse(amURLStr)
+func NewAlertLoader(alertManagerURL string) (AlertLoader, error) {
+	amURL, err := url.Parse(alertManagerURL)
 	if err != nil {
 		return nil, err
 	}
-	useTls := strings.HasPrefix(amURLStr, "https://")
+	useTls := strings.HasPrefix(alertManagerURL, "https://")
 
 	runtime := runtimeclient.New(amURL.Host, path.Join(amURL.Path, "/api/v2"), []string{amURL.Scheme})
 	if useTls {
@@ -68,19 +70,26 @@ func NewAlertLoader() (AlertLoader, error) {
 // ActiveAlert reads the active alerts from the Alertmanager
 // and returns them as a slice.
 func (a *alertLoader) ActiveAlerts() ([]models.Alert, error) {
-	return a.loadAlerts(true, nil)
+	return a.loadAlerts(true, false, nil)
 }
 
 // ActiveAlert reads the active alerts with the provided labels from the Alertmanager
 // and returns them as a slice.
 func (a *alertLoader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
-	return a.loadAlerts(true, labels)
+	return a.loadAlerts(true, false, labels)
+}
+
+// SilencedAlerts reads silenced alerts from the Alertmanager
+// and returns them as a slice
+func (a *alertLoader) SilencedAlerts() ([]models.Alert, error) {
+	return a.loadAlerts(false, true, nil)
 }
 
 // loadAlerts queries the alertmanager with the provided parameters
-func (a *alertLoader) loadAlerts(active bool, labels []string) ([]models.Alert, error) {
+func (a *alertLoader) loadAlerts(active, silenced bool, labels []string) ([]models.Alert, error) {
 	params := alert.NewGetAlertsParams().
 		WithActive(&active).
+		WithSilenced(&silenced).
 		WithFilter(labels)
 
 	alertsOK, err := a.cli.Alert.GetAlerts(params)

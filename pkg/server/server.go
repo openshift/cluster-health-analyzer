@@ -86,9 +86,9 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 			return
 		}
 		componentsProc, err := health.NewHealthProcessor(interval,
-			componentHealthAlerts, componentHealthObjects, componentsHealth, options.Kubeconfig, conf)
+			componentHealthAlerts, componentHealthObjects, componentsHealth, options.Kubeconfig, conf, options.AlertManagerURL)
 		if err != nil {
-			slog.Info("Failed to create component procesor, terminating", "err", err)
+			slog.Info("Failed to create component processor, terminating", "err", err)
 			return
 		}
 		componentsProc.Start(ctx)
@@ -97,7 +97,12 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 	}
 
 	if !options.DisableIncidents {
-		processor, err := processor.NewProcessor(healthMapMetrics, componentsMetrics, groupSeverityCountMetrics, interval, options.PromURL)
+		processorCfg := processor.ProcessorConfig{
+			Interval:        interval,
+			PromURL:         options.PromURL,
+			AlertManagerURL: options.AlertManagerURL,
+		}
+		processor, err := processor.NewProcessor(processorCfg, healthMapMetrics, componentsMetrics, groupSeverityCountMetrics)
 		if err != nil {
 			slog.Error("Failed to create processor, terminating", "err", err)
 			return

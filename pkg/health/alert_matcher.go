@@ -3,6 +3,7 @@ package health
 import (
 	"fmt"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
@@ -17,10 +18,10 @@ var (
 // alertMatcher is a helper to match
 // active alerts based on the provided configuration
 type alertMatcher struct {
-	loader AlertLoader
+	loader alertmanager.AlertLoader
 }
 
-func NewAlertMatcher(alertLoader AlertLoader) alertMatcher {
+func NewAlertMatcher(alertLoader alertmanager.AlertLoader) alertMatcher {
 	return alertMatcher{
 		loader: alertLoader,
 	}

@@ -3,11 +3,12 @@ package health
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
@@ -50,8 +51,8 @@ func TestEvaluateComponentsHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockAlertLoader := MockAlertLoader{
-				alerts: []models.Alert{
+			mockAlertLoader := mocks.NewMockAlertLoader(
+				[]models.Alert{
 					{
 						Labels: models.LabelSet{
 							"alertname": "KubeCPUOvercommit",
@@ -66,8 +67,7 @@ func TestEvaluateComponentsHealth(t *testing.T) {
 							"severity":   "critical",
 						},
 					},
-				},
-			}
+				}, nil, nil)
 
 			testProcessor := createTestHealthProcessor(mockAlertLoader, newMockHealthChecker(OK))
 			testConf, err := loadConfig(tt.testComponentsFile)
@@ -307,8 +307,8 @@ func TestEvaluateComponentHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockAlertLoader := MockAlertLoader{
-				alerts: []models.Alert{
+			mockAlertLoader := mocks.NewMockAlertLoader(
+				[]models.Alert{
 					{
 						Labels: models.LabelSet{
 							"alertname": "FooAlert",
@@ -323,8 +323,7 @@ func TestEvaluateComponentHealth(t *testing.T) {
 							"severity":  "critical",
 						},
 					},
-				},
-			}
+				}, nil, nil)
 			testProcessor := createTestHealthProcessor(mockAlertLoader, tt.mockKubeHealthChecker)
 			componentsHealth, err := testProcessor.evaluateComponent(context.Background(), tt.component)
 			assert.NoError(t, err)
@@ -485,7 +484,7 @@ func TestComponentHealthsToMetrics(t *testing.T) {
 	}
 }
 
-func createTestHealthProcessor(al AlertLoader, healthChecker HealthChecker) healthProcessor {
+func createTestHealthProcessor(al alertmanager.AlertLoader, healthChecker HealthChecker) healthProcessor {
 	alertMatcher := NewAlertMatcher(al)
 	return healthProcessor{
 		khChecker:    healthChecker,
@@ -517,43 +516,6 @@ func newComponentHealth(name string, health HealthStatus) *ComponentHealth {
 type nameStatusPair struct {
 	name   string
 	status HealthStatus
-}
-
-type MockAlertLoader struct {
-	alerts []models.Alert
-	err    error
-}
-
-func (m MockAlertLoader) ActiveAlerts() ([]models.Alert, error) {
-	return m.alerts, m.err
-}
-
-// ActiveAlertsWithLabels returns only the alerts matching all the provided labels
-func (m MockAlertLoader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
-	var res []models.Alert
-	labelsToMatch := labelSliceToMap(labels)
-	for _, a := range m.alerts {
-		allMatch := true
-		for k, v := range labelsToMatch {
-			val, ok := a.Labels[k]
-			if !ok || val != v {
-				allMatch = false
-			}
-		}
-		if allMatch {
-			res = append(res, a)
-		}
-	}
-	return res, m.err
-}
-
-func labelSliceToMap(labels []string) map[string]string {
-	m := make(map[string]string, len(labels))
-	for _, l := range labels {
-		pairAsSlice := strings.Split(l, "=")
-		m[pairAsSlice[0]] = pairAsSlice[1]
-	}
-	return m
 }
 
 func newMockHealthChecker(status HealthStatus) HealthChecker {

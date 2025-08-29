@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
@@ -28,8 +29,8 @@ type healthProcessor struct {
 func NewHealthProcessor(interval time.Duration,
 	alertsMetrics, objectMetrics, componentsMetrics prom.MetricSet,
 	kubeConfigPath string,
-	config *ComponentsConfig) (*healthProcessor, error) {
-	alertLoader, err := NewAlertLoader()
+	config *ComponentsConfig, alertManagerURL string) (*healthProcessor, error) {
+	alertLoader, err := alertmanager.NewAlertLoader(alertManagerURL)
 	if err != nil {
 		return nil, err
 	}

@@ -32,6 +32,7 @@ func getAlertHealthMap(a model.LabelSet) ComponentHealthMap {
 
 	healthMap.GroupId = string(a["group_id"])
 	healthMap.Health = ParseHealthValue(string(a["severity"]))
+	healthMap.Silenced = string(a["silenced"])
 
 	return healthMap
 }
