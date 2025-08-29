@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
@@ -16,6 +17,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+)
+
+const (
+	clusteroperators     = "clusteroperators"
+	configOpenShiftGroup = "config.openshift.io"
 )
 
 type healthProcessor struct {
@@ -164,7 +170,6 @@ func componentHealthMetrics(cHealth *ComponentHealth) ([]prom.Metric, []prom.Met
 		componentMetrics = append(componentMetrics, childComponentMetrics...)
 	}
 	componentName := fullComponentName(cHealth)
-
 	// if component has children then only create metric with component name and status
 	if cHealth.HasChildren() {
 		m := metricWithNameAndStatus(componentName, cHealth.healthStatus)
@@ -287,9 +292,9 @@ func getClusterOperatorNames(restConfig *rest.Config) ([]string, error) {
 	}
 
 	coList, err := cli.Resource(schema.GroupVersionResource{
-		Group:    "config.openshift.io",
+		Group:    configOpenShiftGroup,
 		Version:  "v1",
-		Resource: "clusteroperators",
+		Resource: clusteroperators,
 	}).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -303,12 +308,7 @@ func getClusterOperatorNames(restConfig *rest.Config) ([]string, error) {
 }
 
 func (p *healthProcessor) finalizeComponentTree(components []Component) []Component {
-	for i := range components {
-		c := &components[i]
-		p.setFullName(c)
-	}
-
-	controlPlaneOperators := findComponentByName(components, "control-plane.operators")
+	controlPlaneOperators := findComponentByName(components, "control-plane", "operators")
 	if controlPlaneOperators != nil {
 		p.addClusterOperatorObjects(controlPlaneOperators)
 	} else {
@@ -317,52 +317,42 @@ func (p *healthProcessor) finalizeComponentTree(components []Component) []Compon
 	return components
 }
 
-// setFullName traverses the components tree
-// and sets the full name of each component.
-func (p *healthProcessor) setFullName(c *Component) {
-	if c.fullName == "" {
-		c.fullName = c.Name
-	}
-
-	for i := range c.ChildComponents {
-		ch := &c.ChildComponents[i]
-		ch.fullName = fmt.Sprintf("%s.%s", c.fullName, ch.Name)
-		p.setFullName(ch)
-	}
-}
-
-// addClusterOperatorObjects traverses the components tree
-// and adds clusteroperator objects to the "control-plane.operators" component.
+// addClusterOperatorObjects adds clusteroperator objects to the "control-plane.operators" component.
 // If there is already some clusteroperator defined then it only appends
 // the corresponding object to it.
 func (p *healthProcessor) addClusterOperatorObjects(c *Component) {
 	for _, coName := range p.clusterOperatorNames {
 		coResource := K8sObject{
-			Group:    "config.openshift.io",
+			Group:    configOpenShiftGroup,
 			Name:     coName,
-			Resource: "clusteroperators",
+			Resource: clusteroperators,
 		}
-		if ch := c.GetChildByName(coName); ch != nil {
+		if ch := findComponentByName(c.ChildComponents, coName); ch != nil {
 			ch.Objects = append(ch.Objects, coResource)
 			continue
 		}
 		coSyntComp := Component{
-			Name:     coName,
-			fullName: fmt.Sprintf("%s.%s", c.fullName, coName),
-			Objects:  []K8sObject{coResource},
+			Name:    coName,
+			Objects: []K8sObject{coResource},
 		}
 		c.ChildComponents = append(c.ChildComponents, coSyntComp)
 	}
 }
 
-func findComponentByName(components []Component, name string) *Component {
+func findComponentByName(components []Component, path ...string) *Component {
+	if len(path) == 0 {
+		return nil
+	}
+
 	for i := range components {
 		c := &components[i]
-		if c.fullName == name {
-			return c
-		}
-		if found := findComponentByName(c.ChildComponents, name); found != nil {
-			return found
+		if c.Name == path[0] {
+			if len(path) == 1 {
+				return c
+			}
+			if found := findComponentByName(c.ChildComponents, path[1:]...); found != nil {
+				return found
+			}
 		}
 	}
 

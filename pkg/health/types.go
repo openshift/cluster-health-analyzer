@@ -13,20 +13,9 @@ type ComponentsConfig struct {
 // as defined in the "external" YAML config
 type Component struct {
 	Name            string          `yaml:"name"`
-	fullName        string          `yaml:"-"`
 	Objects         []K8sObject     `yaml:"objects"`
 	ChildComponents []Component     `yaml:"children"`
 	AlertsSelectors AlertsSelectors `yaml:"alerts"`
-}
-
-func (c *Component) GetChildByName(name string) *Component {
-	for i := range c.ChildComponents {
-		ch := &c.ChildComponents[i]
-		if ch.Name == name {
-			return ch
-		}
-	}
-	return nil
 }
 
 // K8sObject is a type representing
