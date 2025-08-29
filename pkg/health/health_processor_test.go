@@ -69,7 +69,7 @@ func TestEvaluateComponentsHealth(t *testing.T) {
 					},
 				}, nil, nil)
 
-			testProcessor := createTestHealthProcessor(mockAlertLoader, newMockHealthChecker(OK))
+			testProcessor := createTestHealthProcessor(mockAlertLoader, newMockHealthChecker(OK), nil)
 			testConf, err := loadConfig(tt.testComponentsFile)
 			assert.NoError(t, err)
 			componentsHealths := testProcessor.evaluateComponentsHealth(context.Background(), testConf.Components)
@@ -324,7 +324,7 @@ func TestEvaluateComponentHealth(t *testing.T) {
 						},
 					},
 				}, nil, nil)
-			testProcessor := createTestHealthProcessor(mockAlertLoader, tt.mockKubeHealthChecker)
+			testProcessor := createTestHealthProcessor(mockAlertLoader, tt.mockKubeHealthChecker, nil)
 			componentsHealth, err := testProcessor.evaluateComponent(context.Background(), tt.component)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedComponentHealth, componentsHealth)
@@ -484,12 +484,163 @@ func TestComponentHealthsToMetrics(t *testing.T) {
 	}
 }
 
-func createTestHealthProcessor(al alertmanager.AlertLoader, healthChecker HealthChecker) healthProcessor {
+func TestFinalizeComponentTree(t *testing.T) {
+	tests := []struct {
+		name                        string
+		testClusterOperatorNames    []string
+		testComponents              []Component
+		expectedFinalizedComponents []Component
+	}{
+		{
+			name:                     "nothing is added if there is no control-plane -> operators",
+			testClusterOperatorNames: []string{"etcd"},
+			testComponents: []Component{
+				{Name: "control-plane"},
+				{Name: "test"},
+				{Name: "foo"},
+			},
+			expectedFinalizedComponents: []Component{
+				{Name: "control-plane"},
+				{Name: "test"},
+				{Name: "foo"},
+			},
+		},
+		{
+			name:                     "existing clusteroperator definition is appended",
+			testClusterOperatorNames: []string{"etcd"},
+			testComponents: []Component{
+				{
+					Name: "control-plane",
+					ChildComponents: []Component{
+						{
+							Name: "operators", ChildComponents: []Component{
+								{
+									Name: "etcd",
+									AlertsSelectors: AlertsSelectors{
+										Selectors: []Selector{
+											{
+												MatchLabels: map[string][]string{
+													"alert": {"TestEtcdAlert"},
+												},
+											},
+										},
+									},
+									Objects: []K8sObject{
+										{
+											Group:    "test.group",
+											Resource: "etcds",
+											Name:     "cluster",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedFinalizedComponents: []Component{
+				{
+					Name: "control-plane",
+					ChildComponents: []Component{
+						{
+							Name: "operators", ChildComponents: []Component{
+								{
+									Name: "etcd",
+									AlertsSelectors: AlertsSelectors{
+										Selectors: []Selector{
+											{
+												MatchLabels: map[string][]string{
+													"alert": {"TestEtcdAlert"},
+												},
+											},
+										},
+									},
+									Objects: []K8sObject{
+										{
+											Group:    "test.group",
+											Resource: "etcds",
+											Name:     "cluster",
+										},
+										{
+											Group:    configOpenShiftGroup,
+											Resource: clusteroperators,
+											Name:     "etcd",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:                     "clusteroperator objects are added to the control-plane -> operators",
+			testClusterOperatorNames: []string{"etcd", "dns"},
+			testComponents: []Component{
+				{
+					Name: "addons",
+					ChildComponents: []Component{
+						{Name: "operators"},
+						{Name: "foo"},
+					},
+				},
+				{
+					Name: "control-plane",
+					ChildComponents: []Component{
+						{Name: "bar"},
+						{Name: "operators"},
+					},
+				},
+			},
+			expectedFinalizedComponents: []Component{
+				{
+					Name: "addons",
+					ChildComponents: []Component{
+						{Name: "operators"},
+						{Name: "foo"},
+					},
+				},
+				{
+					Name: "control-plane",
+					ChildComponents: []Component{
+						{Name: "bar"},
+						{Name: "operators", ChildComponents: []Component{
+							{
+								Name: "etcd",
+								Objects: []K8sObject{
+									{Group: configOpenShiftGroup, Resource: clusteroperators, Name: "etcd"},
+								},
+							},
+							{
+								Name: "dns",
+								Objects: []K8sObject{
+									{Group: configOpenShiftGroup, Resource: clusteroperators, Name: "dns"},
+								},
+							},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testProcessor := createTestHealthProcessor(nil, nil, tt.testClusterOperatorNames)
+			components := testProcessor.finalizeComponentTree(tt.testComponents)
+			assert.Equal(t, tt.expectedFinalizedComponents, components)
+		})
+	}
+}
+
+func createTestHealthProcessor(al alertmanager.AlertLoader, healthChecker HealthChecker, clusterOperatorNames []string) healthProcessor {
 	alertMatcher := NewAlertMatcher(al)
 	return healthProcessor{
-		khChecker:    healthChecker,
-		alertMatcher: alertMatcher,
-		interval:     0 * time.Second,
+		khChecker:            healthChecker,
+		alertMatcher:         alertMatcher,
+		interval:             0 * time.Second,
+		clusterOperatorNames: clusterOperatorNames,
 	}
 }
 
