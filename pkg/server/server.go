@@ -35,12 +35,8 @@ var (
 		"Cluster health components mapping.",
 	)
 	componentsMetrics = prom.NewMetricSet(
-		"cluster:health:components",
+		"cluster_health_components",
 		"Cluster components and their ranking.",
-	)
-	groupSeverityCountMetrics = prom.NewMetricSet(
-		"cluster:health:group_severity:count",
-		"Current counts of group_ids by severity.",
 	)
 
 	componentHealthAlerts = prom.NewMetricSet(
@@ -102,7 +98,7 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 			PromURL:         options.PromURL,
 			AlertManagerURL: options.AlertManagerURL,
 		}
-		processor, err := processor.NewProcessor(processorCfg, healthMapMetrics, componentsMetrics, groupSeverityCountMetrics)
+		processor, err := processor.NewProcessor(processorCfg, healthMapMetrics, componentsMetrics)
 		if err != nil {
 			slog.Error("Failed to create processor, terminating", "err", err)
 			return
@@ -125,7 +121,6 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(healthMapMetrics)
 	reg.MustRegister(componentsMetrics)
-	reg.MustRegister(groupSeverityCountMetrics)
 	reg.MustRegister(componentHealthAlerts)
 	reg.MustRegister(componentHealthObjects)
 	reg.MustRegister(componentsHealth)

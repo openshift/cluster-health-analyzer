@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cluster-health-recording-rules
+  namespace: openshift-cluster-health-analyzer
+spec:
+  groups:
+  - name: cluster-health-rules
+    interval: 30s
+    rules:
+    - record: cluster:health:group_severity:count
+      expr: |
+        count by(severity) (
+          group by(group_id, severity) (
+            label_replace(
+              cluster_health_components_map{src_severity!="none"},
+              "severity", "$1", "src_severity", "(.*)"
+            )
+          )
+        )
