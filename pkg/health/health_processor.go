@@ -9,9 +9,19 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/prometheus/common/model"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+)
+
+const (
+	clusteroperators     = "clusteroperators"
+	configOpenShiftGroup = "config.openshift.io"
 )
 
 type healthProcessor struct {
@@ -22,6 +32,7 @@ type healthProcessor struct {
 	componentsMetrics       prom.MetricSet
 	khChecker               HealthChecker
 	config                  *ComponentsConfig
+	clusterOperatorNames    []string
 }
 
 // NewHealthProcessor initializes all the required objects (alert loader, alert matcher and kube-health checker)
@@ -35,8 +46,18 @@ func NewHealthProcessor(interval time.Duration,
 		return nil, err
 	}
 
+	restConfig, err := common.GetKubeConfig(kubeConfigPath)
+	if err != nil {
+		return nil, err
+	}
+
 	alertMatcher := NewAlertMatcher(alertLoader)
-	khChecker, err := NewKubeHealthChecker(kubeConfigPath)
+	khChecker, err := NewKubeHealthChecker(restConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	clusterOperatorNames, err := getClusterOperatorNames(restConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +70,7 @@ func NewHealthProcessor(interval time.Duration,
 		componentsMetrics:       componentsMetrics,
 		khChecker:               khChecker,
 		config:                  config,
+		clusterOperatorNames:    clusterOperatorNames,
 	}, nil
 }
 
@@ -59,14 +81,16 @@ func (p *healthProcessor) Start(ctx context.Context) {
 
 // Run periodically runs the processor and blocks until the provided context is done.
 func (p *healthProcessor) Run(ctx context.Context) {
-	healthStatuses := p.evaluateComponentsHealth(ctx, p.config.Components)
+	components := p.finalizeComponentTree(p.config.Components)
+
+	healthStatuses := p.evaluateComponentsHealth(ctx, components)
 	p.updateAllMetrics(createHealthMetrics(healthStatuses))
 	ticker := time.NewTicker(p.interval)
 	for {
 		select {
 		case <-ticker.C:
 			slog.Info("Evaluating health of the components")
-			healthStatuses = p.evaluateComponentsHealth(ctx, p.config.Components)
+			healthStatuses = p.evaluateComponentsHealth(ctx, components)
 			p.updateAllMetrics(createHealthMetrics(healthStatuses))
 		case <-ctx.Done():
 			ticker.Stop()
@@ -92,23 +116,23 @@ func (p *healthProcessor) evaluateComponentsHealth(ctx context.Context, componen
 // evaluateComponent evaluates the health of the provided component
 // and recursively the health of all its child components.
 func (p *healthProcessor) evaluateComponent(ctx context.Context, c *Component) (*ComponentHealth, error) {
-	ch := ComponentHealth{name: c.Name}
+	cHealth := ComponentHealth{name: c.Name}
 
-	for _, child := range c.ChildComponents {
-		childHealth, err := p.evaluateComponent(ctx, &child)
+	for _, ch := range c.ChildComponents {
+		childHealth, err := p.evaluateComponent(ctx, &ch)
 		if err != nil {
 			return nil, err
 		}
-		ch.AddChild(childHealth)
+		cHealth.AddChild(childHealth)
 	}
 
 	objectStatuses := p.khChecker.EvaluateObjects(ctx, c.Objects)
 	alerts, alertsErr := p.alertMatcher.evaluateAlerts(c.AlertsSelectors)
-	ch.alertsErr = alertsErr
-	ch.alerts = alerts
-	ch.objectStatuses = objectStatuses
-	ch.healthStatus = ch.calculateHealthStatus()
-	return &ch, nil
+	cHealth.alertsErr = alertsErr
+	cHealth.alerts = alerts
+	cHealth.objectStatuses = objectStatuses
+	cHealth.healthStatus = cHealth.calculateHealthStatus()
+	return &cHealth, nil
 }
 
 // updateAllMetrics updates all the metrics - for active alerts, for object statuses
@@ -146,7 +170,6 @@ func componentHealthMetrics(cHealth *ComponentHealth) ([]prom.Metric, []prom.Met
 		componentMetrics = append(componentMetrics, childComponentMetrics...)
 	}
 	componentName := fullComponentName(cHealth)
-
 	// if component has children then only create metric with component name and status
 	if cHealth.HasChildren() {
 		m := metricWithNameAndStatus(componentName, cHealth.healthStatus)
@@ -259,4 +282,79 @@ func fullComponentName(c *ComponentHealth) string {
 		name = fmt.Sprintf("%s.%s", pName, name)
 	}
 	return name
+}
+
+// getClusterOperatorNames reads clusteroperator names from the cluster API
+func getClusterOperatorNames(restConfig *rest.Config) ([]string, error) {
+	cli, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	coList, err := cli.Resource(schema.GroupVersionResource{
+		Group:    configOpenShiftGroup,
+		Version:  "v1",
+		Resource: clusteroperators,
+	}).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var coNames []string
+	for _, it := range coList.Items {
+		coNames = append(coNames, it.GetName())
+	}
+
+	return coNames, nil
+}
+
+func (p *healthProcessor) finalizeComponentTree(components []Component) []Component {
+	controlPlaneOperators := findComponentByName(components, "control-plane", "operators")
+	if controlPlaneOperators != nil {
+		p.addClusterOperatorObjects(controlPlaneOperators)
+	} else {
+		slog.Warn("Could not find the \"control-plane.operators\" component. ClusterOperators will not be evaluated!")
+	}
+	return components
+}
+
+// addClusterOperatorObjects adds clusteroperator objects to the "control-plane.operators" component.
+// If there is already some clusteroperator defined then it only appends
+// the corresponding object to it.
+func (p *healthProcessor) addClusterOperatorObjects(c *Component) {
+	for _, coName := range p.clusterOperatorNames {
+		coResource := K8sObject{
+			Group:    configOpenShiftGroup,
+			Name:     coName,
+			Resource: clusteroperators,
+		}
+		if ch := findComponentByName(c.ChildComponents, coName); ch != nil {
+			ch.Objects = append(ch.Objects, coResource)
+			continue
+		}
+		coSyntComp := Component{
+			Name:    coName,
+			Objects: []K8sObject{coResource},
+		}
+		c.ChildComponents = append(c.ChildComponents, coSyntComp)
+	}
+}
+
+func findComponentByName(components []Component, path ...string) *Component {
+	if len(path) == 0 {
+		return nil
+	}
+
+	for i := range components {
+		c := &components[i]
+		if c.Name == path[0] {
+			if len(path) == 1 {
+				return c
+			}
+			if found := findComponentByName(c.ChildComponents, path[1:]...); found != nil {
+				return found
+			}
+		}
+	}
+
+	return nil
 }

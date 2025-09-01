@@ -33,10 +33,6 @@ data:
             selectors:
             - matchLabels:
                 namespace: ["openshift-etcd","openshift-etcd-operator"]
-          objects:
-          - group: config.openshift.io
-            resource: clusteroperators
-            name: etcd
     - name: addons
       children:
       - name: kubevirt

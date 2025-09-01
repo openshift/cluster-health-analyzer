@@ -15,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 type HealthChecker interface {
@@ -31,22 +30,7 @@ type kubeHealthChecker struct {
 // NewKubeHealthChecker creates a new instance of the kubeHealthChecker.
 // If kubeConfig is provided, it will use that config file; otherwise it will
 // attempt to use in-cluster configuration.
-func NewKubeHealthChecker(kubeConfig string) (HealthChecker, error) {
-	var config *rest.Config
-	var err error
-
-	if kubeConfig != "" {
-		config, err = clientcmd.BuildConfigFromFlags("", kubeConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build config from kubeconfig file %q: %w", kubeConfig, err)
-		}
-	} else {
-		config, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-		}
-	}
-
+func NewKubeHealthChecker(config *rest.Config) (HealthChecker, error) {
 	evaluator, err := khealth.NewHealthEvaluator(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create health evaluator: %w", err)
