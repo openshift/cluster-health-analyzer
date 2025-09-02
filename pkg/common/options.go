@@ -18,8 +18,8 @@ type Options struct {
 	// Only to be used to for testing.
 	DisableAuthForTesting bool
 
-	// Disable components health evaluation
-	DisableComponentsHealth bool
+	// Enable components health evaluation
+	EnableComponentsHealth bool
 
 	// Disable incident detection
 	DisableIncidents bool
@@ -45,8 +45,8 @@ func (o *Options) Flags() *pflag.FlagSet {
 
 	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
 		"Flag for testing purposes to disable auth")
-	fs.BoolVar(&o.DisableComponentsHealth, "disable-components-health", o.DisableComponentsHealth,
-		"Flag to disable components health evaluation based on alerts and kube-health evaluation")
+	fs.BoolVar(&o.EnableComponentsHealth, "enable-components-health", o.EnableComponentsHealth,
+		"Flag to enable components health evaluation based on alerts and kube-health evaluation")
 	fs.BoolVar(&o.DisableIncidents, "disable-incidents", o.DisableIncidents,
 		"Flag to disable incident detection and related metrics")
 	fs.StringVar(&o.ComponentsPath, "components", o.ComponentsPath,
