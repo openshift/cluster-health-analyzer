@@ -12,20 +12,19 @@ type loader struct {
 	api v1.API
 }
 
-type Loader struct {
-	*loader
+type Loader interface {
+	LoadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error)
+	LoadAlertsRange(ctx context.Context, start, end time.Time, step time.Duration) (RangeVector, error)
+	LoadVectorRange(ctx context.Context, query string, start, end time.Time, step time.Duration) (RangeVector, error)
 }
 
-func NewLoader(prometheusURL string) (*Loader, error) {
+func NewLoader(prometheusURL string) (Loader, error) {
 	promClient, err := NewPrometheusClient(prometheusURL)
 	if err != nil {
 		return nil, err
 	}
-
-	return &Loader{
-		&loader{
-			api: v1.NewAPI(promClient),
-		},
+	return &loader{
+		api: v1.NewAPI(promClient),
 	}, nil
 }
 
