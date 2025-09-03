@@ -19,8 +19,8 @@ import (
 	prom_config "github.com/prometheus/common/config"
 )
 
-// AlertLoader reads alerts from the Alertmanager API
-type AlertLoader interface {
+// Loader reads alerts from the Alertmanager API
+type Loader interface {
 	// ActiveAlert reads the active alerts from the Alertmanager
 	// and returns them as a slice.
 	ActiveAlerts() ([]models.Alert, error)
@@ -32,12 +32,12 @@ type AlertLoader interface {
 	SilencedAlerts() ([]models.Alert, error)
 }
 
-type alertLoader struct {
+type loader struct {
 	cli *client.AlertmanagerAPI
 }
 
-// NewAlertLoader creates a new client Alermanager API
-func NewAlertLoader(alertManagerURL string) (AlertLoader, error) {
+// NewLoader creates a new client Alermanager API
+func NewLoader(alertManagerURL string) (Loader, error) {
 	amURL, err := url.Parse(alertManagerURL)
 	if err != nil {
 		return nil, err
@@ -60,39 +60,39 @@ func NewAlertLoader(alertManagerURL string) (AlertLoader, error) {
 
 		runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
 			"Bearer", prom_config.NewInlineSecret(string(token)), defaultRt)
-		return &alertLoader{
+		return &loader{
 			cli: client.New(runtime, strfmt.Default),
 		}, nil
 	}
-	return &alertLoader{cli: client.New(runtime, strfmt.Default)}, nil
+	return &loader{cli: client.New(runtime, strfmt.Default)}, nil
 }
 
 // ActiveAlert reads the active alerts from the Alertmanager
 // and returns them as a slice.
-func (a *alertLoader) ActiveAlerts() ([]models.Alert, error) {
-	return a.loadAlerts(true, false, nil)
+func (l *loader) ActiveAlerts() ([]models.Alert, error) {
+	return l.loadAlerts(true, false, nil)
 }
 
 // ActiveAlert reads the active alerts with the provided labels from the Alertmanager
 // and returns them as a slice.
-func (a *alertLoader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
-	return a.loadAlerts(true, false, labels)
+func (l *loader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
+	return l.loadAlerts(true, false, labels)
 }
 
 // SilencedAlerts reads silenced alerts from the Alertmanager
 // and returns them as a slice
-func (a *alertLoader) SilencedAlerts() ([]models.Alert, error) {
-	return a.loadAlerts(false, true, nil)
+func (l *loader) SilencedAlerts() ([]models.Alert, error) {
+	return l.loadAlerts(false, true, nil)
 }
 
 // loadAlerts queries the alertmanager with the provided parameters
-func (a *alertLoader) loadAlerts(active, silenced bool, labels []string) ([]models.Alert, error) {
+func (l *loader) loadAlerts(active, silenced bool, labels []string) ([]models.Alert, error) {
 	params := alert.NewGetAlertsParams().
 		WithActive(&active).
 		WithSilenced(&silenced).
 		WithFilter(labels)
 
-	alertsOK, err := a.cli.Alert.GetAlerts(params)
+	alertsOK, err := l.cli.Alert.GetAlerts(params)
 	if err != nil {
 		return nil, err
 	}
