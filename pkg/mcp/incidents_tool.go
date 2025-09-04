@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
 	"slices"
 	"sort"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/prometheus/alertmanager/api/v2/models"
+	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,16 +28,26 @@ import (
 
 type IncidentTool struct {
 	mcp.Tool
-	consoleURL string
+
+	promURL         string
+	alertManagerURL string
+	consoleURL      string
+
+	// the followings allow to use mocked instance of needed clients for testing
+	getPrometheusClientFn   func(string, string) (api.Client, error)
+	getAlertManagerClientFn func(string, string) (alertmanager.Loader, error)
 }
 
 // NewIncidentsTool creates a new MCP tool for the incidents
-func NewIncidentsTool() IncidentTool {
+func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
 	readOnly := true
+	var err error
+
 	consoleURL, err := getConsoleURL()
 	if err != nil {
 		slog.Error("Failed to obtain cluster console URL", "error", err)
 	}
+
 	return IncidentTool{
 		mcp.Tool{
 			Name: "get_incidents",
@@ -58,7 +70,11 @@ func NewIncidentsTool() IncidentTool {
 				},
 			},
 		},
+		promURL,
+		alertmanagerURL,
 		consoleURL,
+		getPrometheusClient,
+		getAlertManagerClient,
 	}
 }
 
@@ -72,28 +88,31 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		return nil, err
 	}
 
-	promURL := os.Getenv("PROM_URL")
-	promClient, err := prom.NewPrometheusClientWithToken(promURL, token)
+	amClient, err := i.getAlertManagerClientFn(i.alertManagerURL, token)
 	if err != nil {
-		slog.Error("Failed to initialize Prometheus client", "error", err)
 		return nil, err
 	}
 
-	maxAgeHours := 360 // 15 days default
+	promClient, err := i.getPrometheusClientFn(i.promURL, token)
+	if err != nil {
+		return nil, err
+	}
+	promAPI := v1.NewAPI(promClient)
 
+	maxAgeHours := 360 // 15 days default
 	if request.Params.Arguments != nil {
 		if ageHours, ok := request.GetArguments()["max_age_hours"].(float64); ok {
 			maxAgeHours = int(ageHours)
 		}
 	}
 
-	promAPI := v1.NewAPI(promClient)
 	timeNow := time.Now()
 	queryTimeRange := v1.Range{
 		Start: timeNow.Add(-time.Duration(maxAgeHours) * time.Hour),
 		End:   timeNow,
 		Step:  300 * time.Second,
 	}
+
 	val, warning, err := promAPI.QueryRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange)
 	if err != nil {
 		slog.Error("Recieved error response from Prometheus", "error", err)
@@ -103,13 +122,19 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		slog.Warn("Prometheus query response", "warning", warning)
 	}
 
+	silences, err := amClient.SilencedAlerts()
+	if err != nil {
+		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
+		return nil, err
+	}
+
 	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
 		return nil, err
 	}
 
-	incidents := getAlertDataForIncidents(ctx, incidentsMap, promAPI, queryTimeRange)
+	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promAPI, queryTimeRange)
 	r := Response{
 		Incidents: Incidents{
 			Total:     len(incidents),
@@ -170,6 +195,7 @@ func (i *IncidentTool) transformPromValueToIncident(data model.Value, qRange v1.
 	for _, v := range dataVec {
 		alertSeverity := v.Metric["src_severity"]
 		alertName := v.Metric["src_alertname"]
+
 		if alertSeverity == "none" {
 			slog.Debug("Skipping unknown severity ", "alert", alertName, "severity", alertSeverity)
 			continue
@@ -180,6 +206,7 @@ func (i *IncidentTool) transformPromValueToIncident(data model.Value, qRange v1.
 		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
 
 		labels := common.SrcLabels(v.Metric)
+
 		healthyVal := processor.HealthValue(lastSample.Value)
 		groupId := string(v.Metric["group_id"])
 		component := string(v.Metric["component"])
@@ -248,7 +275,7 @@ func getTokenFromCtx(ctx context.Context) (string, error) {
 // getAlertDataForIncidents queries Prometheus for firing alerts from the last 15 days (to have
 // some starting time) and then maps (the alert identifier is composed by name and namespace)
 // the active alerts to the provided map of incidents. It returns slice of the incidents.
-func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, promAPI v1.API, qRange v1.Range) []Incident {
+func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, silences []models.Alert, promAPI v1.API, qRange v1.Range) []Incident {
 	v, _, err := promAPI.QueryRange(ctx, `ALERTS{alertstate!="pending"}`, qRange)
 	if err != nil {
 		slog.Error("Failed to query firing alerts", "error", err)
@@ -258,6 +285,14 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 	if !ok {
 		slog.Error("Failed to convert alert data")
 		return nil
+	}
+
+	silencedAlertsMap := make(map[string][]models.Alert, len(silences))
+	for _, silencedAlert := range silences {
+		if _, f := silencedAlertsMap["alertname"]; f {
+			silencedAlertsMap["alertname"] = []models.Alert{}
+		}
+		silencedAlertsMap["alertname"] = append(silencedAlertsMap["alertname"], silencedAlert)
 	}
 
 	var alerts []model.LabelSet
@@ -286,6 +321,15 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 			for _, firingAlert := range alerts {
 				match, _ := subsetMatcher.Matches(firingAlert)
 				if match {
+
+					// the silencedAlertsMap is precomputed in order to contain all the silences grouped by alertname
+					// [Alert1] = [{alertname="Alert1", namespace="foo"}, alertname="Alert1", namespace="bar"]
+					if isAlertSilenced(firingAlert, silencedAlertsMap["alertname"]) {
+						firingAlert["silenced"] = "true"
+					} else {
+						firingAlert["silenced"] = "false"
+					}
+
 					updatedAlerts = append(updatedAlerts, cleanupLabels(firingAlert))
 				}
 			}
@@ -336,4 +380,51 @@ func getConsoleURL() (string, error) {
 	}
 
 	return consoleURL, nil
+}
+
+func getPrometheusClient(promURL, token string) (api.Client, error) {
+	promClient, err := prom.NewPrometheusClientWithToken(promURL, token)
+	if err != nil {
+		slog.Error("Failed to initialize Prometheus client", "error", err)
+		return nil, err
+	}
+	return promClient, nil
+}
+
+func getAlertManagerClient(alertManagerURL, token string) (alertmanager.Loader, error) {
+	amClient, err := alertmanager.NewLoader(alertmanager.LoaderConfig{
+		AlertManagerURL: alertManagerURL,
+		Token:           token,
+	})
+	if err != nil {
+		slog.Error("Failed to initialize AlertManager client", "error", err)
+		return nil, err
+	}
+	return amClient, nil
+}
+
+func isAlertSilenced(alert model.LabelSet, silences []models.Alert) bool {
+	// The labels defined in an Alertmanager silence are a subset of the labels on an alert
+	// If all the common labels by alert and the silence matches we can assume that alert is silenced
+
+	for _, silence := range silences {
+		if silence.Labels == nil {
+			continue
+		}
+
+		// Convert silence labels to model.LabelSet
+		silenceLabels := make(model.LabelSet)
+		for silenceLabel, silenceValue := range silence.Labels {
+			silenceLabels[model.LabelName(silenceLabel)] = model.LabelValue(silenceValue)
+		}
+
+		// Use LabelsSubsetMatcher to check if silence labels match the alert
+		subsetMatcher := common.LabelsSubsetMatcher{Labels: silenceLabels}
+		match, _ := subsetMatcher.Matches(alert)
+		if match {
+			return true
+		}
+	}
+
+	return false
 }

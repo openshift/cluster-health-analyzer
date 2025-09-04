@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
+	"github.com/prometheus/alertmanager/api/v2/models"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
@@ -246,6 +247,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 		name              string
 		activeAlerts      model.Matrix
 		incidentsMap      map[string]Incident
+		silencedAlerts    []models.Alert
 		expectedIncidents []Incident
 	}{
 		{
@@ -286,6 +288,14 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 					},
 				},
 			},
+			silencedAlerts: []models.Alert{
+				{
+					Labels: map[string]string{
+						"alertname": "Alert1",
+						"namespace": "foo",
+					},
+				},
+			},
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
@@ -303,12 +313,14 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"name":       "Alert1",
 							"namespace":  "foo",
 							"status":     "firing",
+							"silenced":   "true",
 							"start_time": model.LabelValue(model.Now().Add(-25 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
 							"name":       "Alert1",
 							"namespace":  "bar",
 							"status":     "firing",
+							"silenced":   "false",
 							"start_time": model.LabelValue(model.Now().Add(-24 * time.Minute).Time().Format(time.RFC3339)),
 						},
 					},
@@ -371,6 +383,14 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 					},
 				},
 			},
+			silencedAlerts: []models.Alert{
+				{
+					Labels: map[string]string{
+						"alertname": "Alert1",
+						"namespace": "foo",
+					},
+				},
+			},
 			expectedIncidents: []Incident{
 				{
 					GroupId: "1",
@@ -379,6 +399,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"name":       "Alert1",
 							"namespace":  "foo",
 							"status":     "resolved",
+							"silenced":   "true",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
@@ -386,6 +407,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"name":       "Alert1",
 							"namespace":  "bar",
 							"status":     "resolved",
+							"silenced":   "false",
 							"start_time": model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 						},
@@ -398,6 +420,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"name":       "Alert1",
 							"namespace":  "foo",
 							"status":     "resolved",
+							"silenced":   "true",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
@@ -405,8 +428,122 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"name":       "Alert2",
 							"namespace":  "bar",
 							"status":     "resolved",
+							"silenced":   "false",
 							"start_time": model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "Alerts are correctly marked as silenced",
+			// three alerts with the same name
+			// A. Alert1, namespace=foo, pod=red
+			// B. Alert1, namespace=foo, pod=blue (same alertname and namespace with A. but differend pod name)
+			// C. Alert1, namespace=bar, pod=red (same alertname and pod name with A. but different namespace)
+			activeAlerts: model.Matrix{
+				&model.SampleStream{
+					Metric: model.Metric{
+						"alertname":  "Alert1",
+						"namespace":  "foo",
+						"pod":        "red",
+						"alertstate": "firing",
+					},
+					Values: []model.SamplePair{
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-20 * time.Minute),
+						},
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-1 * time.Minute),
+						},
+					},
+				},
+				&model.SampleStream{
+					Metric: model.Metric{
+						"alertname":  "Alert1",
+						"namespace":  "foo",
+						"pod":        "blue",
+						"alertstate": "firing",
+					},
+					Values: []model.SamplePair{
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-20 * time.Minute),
+						},
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-1 * time.Minute),
+						},
+					},
+				},
+				&model.SampleStream{
+					Metric: model.Metric{
+						"alertname":  "Alert1",
+						"namespace":  "bar",
+						"pod":        "red",
+						"alertstate": "firing",
+					},
+					Values: []model.SamplePair{
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-20 * time.Minute),
+						},
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-1 * time.Minute),
+						},
+					},
+				},
+			},
+			incidentsMap: map[string]Incident{
+				"1": {
+					GroupId: "1",
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert1", "namespace": "foo", "pod": "red"},
+						{"alertname": "Alert1", "namespace": "foo", "pod": "blue"},
+						{"alertname": "Alert1", "namespace": "bar", "pod": "red"},
+					},
+				},
+			},
+			silencedAlerts: []models.Alert{
+				{
+					Labels: map[string]string{
+						"alertname": "Alert1",
+						"namespace": "foo",
+						"pod":       "blue",
+					},
+				},
+			},
+			expectedIncidents: []Incident{
+				{
+					GroupId: "1",
+					Alerts: []model.LabelSet{
+						{
+							"name":       "Alert1",
+							"namespace":  "foo",
+							"status":     "firing",
+							"silenced":   "false",
+							"pod":        "red",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+						},
+						{
+							"name":       "Alert1",
+							"namespace":  "foo",
+							"status":     "firing",
+							"silenced":   "true",
+							"pod":        "blue",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+						},
+						{
+							"name":       "Alert1",
+							"namespace":  "bar",
+							"status":     "firing",
+							"silenced":   "false",
+							"pod":        "red",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 					},
 				},
@@ -418,12 +555,12 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			mockPromApi := MockPromAPI{modelValue: tt.activeAlerts}
-			incidents := getAlertDataForIncidents(ctx, tt.incidentsMap, &mockPromApi, v1.Range{
+			incidents := getAlertDataForIncidents(ctx, tt.incidentsMap, tt.silencedAlerts, &mockPromApi, v1.Range{
 				Start: time.Now().Add(-30 * time.Minute),
 				End:   time.Now(),
 				Step:  300 * time.Second,
 			})
-			assert.ElementsMatch(t, tt.expectedIncidents, incidents)
+			assert.Equal(t, tt.expectedIncidents, incidents)
 		})
 	}
 }

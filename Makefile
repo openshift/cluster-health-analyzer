@@ -56,6 +56,10 @@ proxy:
 run:
 	go run ./main.go serve --disable-auth-for-testing
 
+.PHONY: run-mcp
+run-mcp:
+	go run ./main.go mcp
+
 ## simulate> simulate test data and creates cluster-health-analyzer-openmetrics.txt in openmetrics format
 .PHONY: simulate
 simulate:
