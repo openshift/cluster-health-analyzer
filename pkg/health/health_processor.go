@@ -41,7 +41,9 @@ func NewHealthProcessor(interval time.Duration,
 	alertsMetrics, objectMetrics, componentsMetrics prom.MetricSet,
 	kubeConfigPath string,
 	config *ComponentsConfig, alertManagerURL string) (*healthProcessor, error) {
-	alertLoader, err := alertmanager.NewAlertLoader(alertManagerURL)
+	alertLoader, err := alertmanager.NewLoader(alertmanager.LoaderConfig{
+		AlertManagerURL: alertManagerURL,
+	})
 	if err != nil {
 		return nil, err
 	}

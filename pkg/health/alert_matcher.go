@@ -18,10 +18,10 @@ var (
 // alertMatcher is a helper to match
 // active alerts based on the provided configuration
 type alertMatcher struct {
-	loader alertmanager.AlertLoader
+	loader alertmanager.Loader
 }
 
-func NewAlertMatcher(alertLoader alertmanager.AlertLoader) alertMatcher {
+func NewAlertMatcher(alertLoader alertmanager.Loader) alertMatcher {
 	return alertMatcher{
 		loader: alertLoader,
 	}

@@ -634,7 +634,7 @@ func TestFinalizeComponentTree(t *testing.T) {
 	}
 }
 
-func createTestHealthProcessor(al alertmanager.AlertLoader, healthChecker HealthChecker, clusterOperatorNames []string) healthProcessor {
+func createTestHealthProcessor(al alertmanager.Loader, healthChecker HealthChecker, clusterOperatorNames []string) healthProcessor {
 	alertMatcher := NewAlertMatcher(al)
 	return healthProcessor{
 		khChecker:            healthChecker,
