@@ -32,39 +32,59 @@ type Loader interface {
 	SilencedAlerts() ([]models.Alert, error)
 }
 
+type LoaderConfig struct {
+	AlertManagerURL string
+	Token           string
+}
+
 type loader struct {
 	cli *client.AlertmanagerAPI
 }
 
 // NewLoader creates a new client Alermanager API
-func NewLoader(alertManagerURL string) (Loader, error) {
-	amURL, err := url.Parse(alertManagerURL)
+func NewLoader(cfg LoaderConfig) (Loader, error) {
+	amURL, err := url.Parse(cfg.AlertManagerURL)
 	if err != nil {
 		return nil, err
 	}
-	useTls := strings.HasPrefix(alertManagerURL, "https://")
+	useTls := strings.HasPrefix(cfg.AlertManagerURL, "https://")
 
 	runtime := runtimeclient.New(amURL.Host, path.Join(amURL.Path, "/api/v2"), []string{amURL.Scheme})
 	if useTls {
-		token, err := readTokenFromFile()
+
+		token := cfg.Token
+
+		if token == "" {
+			tokenBytes, err := readTokenFromFile()
+			if err != nil {
+				return nil, err
+			}
+			token = string(tokenBytes)
+		}
+
+		amClient, err := initTlsAlertManagerClient(runtime, token)
 		if err != nil {
 			return nil, err
 		}
 
-		certs, err := createCertPool()
-		if err != nil {
-			return nil, err
-		}
-		defaultRt := api.DefaultRoundTripper.(*http.Transport)
-		defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
-
-		runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
-			"Bearer", prom_config.NewInlineSecret(string(token)), defaultRt)
 		return &loader{
-			cli: client.New(runtime, strfmt.Default),
+			cli: amClient,
 		}, nil
 	}
 	return &loader{cli: client.New(runtime, strfmt.Default)}, nil
+}
+
+func initTlsAlertManagerClient(runtime *runtimeclient.Runtime, token string) (*client.AlertmanagerAPI, error) {
+	certs, err := createCertPool()
+	if err != nil {
+		return nil, err
+	}
+	defaultRt := api.DefaultRoundTripper.(*http.Transport)
+	defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
+
+	runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
+		"Bearer", prom_config.NewInlineSecret(token), defaultRt)
+	return client.New(runtime, strfmt.Default), nil
 }
 
 // ActiveAlert reads the active alerts from the Alertmanager

@@ -55,7 +55,9 @@ func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.
 		return nil, err
 	}
 
-	amLoader, err := alertmanager.NewLoader(cfg.AlertManagerURL)
+	amLoader, err := alertmanager.NewLoader(alertmanager.LoaderConfig{
+		AlertManagerURL: cfg.AlertManagerURL,
+	})
 	if err != nil {
 		return nil, err
 	}
