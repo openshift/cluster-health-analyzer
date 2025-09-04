@@ -10,6 +10,7 @@ import (
 const SrcLabelPrefix = "src_"
 
 // srcLabels returns a map of labels that are not internal.
+//
 // These labels are used for matching underlying metrics (e.g. alerts).
 func SrcLabels(labels model.Metric) model.LabelSet {
 	ret := make(model.LabelSet)
