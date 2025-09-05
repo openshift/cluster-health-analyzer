@@ -31,7 +31,7 @@ metrics:
 
 ```
 # Mapping of source signal to components and incident groups.
-cluster:health:components:map
+cluster_health_components_map
 {
   # Identifier of the source signal type
   type="alert"
@@ -54,7 +54,7 @@ cluster:health:components:map
 
 ```
 # Metadata about the components in the system
-cluster:health:components
+cluster_health_components
 {
   # Identifier of the component
   component="compute", layer="compute"
