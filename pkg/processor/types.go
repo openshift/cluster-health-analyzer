@@ -96,6 +96,7 @@ func (c ComponentHealthMap) Labels() model.LabelSet {
 		"component": model.LabelValue(c.Component),
 		"type":      model.LabelValue(c.SrcType),
 		"group_id":  model.LabelValue(c.GroupId),
+		"silenced":  model.LabelValue(c.Silenced),
 	}
 
 	labels := make(model.LabelSet, len(c.SrcLabels)+len(metaLabels))
@@ -152,7 +153,7 @@ func evalMatcherFns(fns []componentMatcherFn, labels model.LabelSet) (
 
 // getLabelsSubset returns a subset of the labels with given keys.
 func getLabelsSubset(m model.LabelSet, keys ...model.LabelName) model.LabelSet {
-	keys = append([]model.LabelName{"namespace", "alertname", "severity", "silenced"}, keys...)
+	keys = append([]model.LabelName{"namespace", "alertname", "severity"}, keys...)
 	return getMapSubset(m, keys...)
 }
 
