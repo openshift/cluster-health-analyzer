@@ -246,12 +246,12 @@ func Test_evaluateSilences(t *testing.T) {
 				{
 					"alertname": "KubeNodeNotReady",
 					"namespace": "openshift-monitoring",
-					"silenced":  "0",
+					"silenced":  "false",
 				},
 				{
 					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-etcd",
-					"silenced":  "1",
+					"silenced":  "true",
 				},
 			},
 			wantErr: nil,

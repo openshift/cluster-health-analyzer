@@ -227,7 +227,7 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	}
 
 	// convert slice to temporary map for better lookup
-	silencedAlertsMap := make(map[string]struct{})
+	silencedAlertsMap := make(map[string]struct{}, len(silenced))
 	for _, silencedAlert := range silenced {
 		silencedAlertsMap[silencedAlert.Labels[AlertNameLabelKey]] = struct{}{}
 	}
@@ -235,10 +235,10 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	for i := range len(alerts) {
 		alertName := string(alerts[i][AlertNameLabelKey])
 		if _, f := silencedAlertsMap[alertName]; f {
-			alerts[i]["silenced"] = "1"
-			continue
+			alerts[i]["silenced"] = "true"
+		} else {
+			alerts[i]["silenced"] = "false"
 		}
-		alerts[i]["silenced"] = "0"
 	}
 
 	return alerts, nil
