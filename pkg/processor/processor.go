@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -227,18 +229,50 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	}
 
 	// convert slice to temporary map for better lookup
-	silencedAlertsMap := make(map[string]struct{}, len(silenced))
+	silencedAlertsMap := make(map[string][]models.Alert, len(silenced))
 	for _, silencedAlert := range silenced {
-		silencedAlertsMap[silencedAlert.Labels[AlertNameLabelKey]] = struct{}{}
+		labelKey := silencedAlert.Labels[AlertNameLabelKey]
+		if _, f := silencedAlertsMap[labelKey]; !f {
+			silencedAlertsMap[labelKey] = []models.Alert{}
+		}
+		silencedAlertsMap[labelKey] = append(silencedAlertsMap[labelKey], silencedAlert)
 	}
 
-	for i := range len(alerts) {
+	for i := range alerts {
 		alertName := string(alerts[i][AlertNameLabelKey])
-		if _, f := silencedAlertsMap[alertName]; f {
-			alerts[i]["silenced"] = "true"
-		} else {
-			alerts[i]["silenced"] = "false"
+		// initially default all alerts to silenced=false
+		// this will be updated if following condition are met
+		alerts[i]["silenced"] = "false"
+
+		silencedAlerts, nameIsSilenced := silencedAlertsMap[alertName]
+		if !nameIsSilenced {
+			continue
 		}
+
+		// An `alertname` can apply to multiple alerts with different labels.
+		// We must iterate through the labels of each alert with the same `alertname`
+		// to find the specific silence that applies.
+		// For example, `{alertname="Alert1", namespace="foo"}` and
+		// `{alertname="Alert1", namespace="bar"}` are distinct alerts.
+		// A silence on `{alertname="Alert1", namespace="foo"}` will only silence the first alert.
+		for _, silencedAlert := range silencedAlerts {
+			if silencedAlert.Labels == nil {
+				continue
+			}
+			// Convert silence labels to model.LabelSet
+			silenceLabels := make(model.LabelSet)
+			for k, v := range silencedAlert.Labels {
+				silenceLabels[model.LabelName(k)] = model.LabelValue(v)
+			}
+			// Use LabelsIntersectionMatcher to check for an equal intersection between the silence and the alert
+			subsetMatcher := common.LabelsIntersectionMatcher{Labels: silenceLabels}
+			match, _ := subsetMatcher.Matches(alerts[i])
+			if match {
+				alerts[i]["silenced"] = "true"
+				break
+			}
+		}
+
 	}
 
 	return alerts, nil
