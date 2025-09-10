@@ -222,16 +222,18 @@ func Test_evaluateSilences(t *testing.T) {
 		wantErr         error
 	}{
 		{
-			name: "happy path",
+			name: "all alerts are silenced",
 			args: args{
 				alerts: []model.LabelSet{
 					{
-						"alertname": "KubeNodeNotReady",
+						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-monitoring",
+						"group_id":  "group_1",
 					},
 					{
 						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-etcd",
+						"group_id":  "group_1",
 					},
 				},
 			},
@@ -239,25 +241,109 @@ func Test_evaluateSilences(t *testing.T) {
 				{
 					Labels: map[string]string{
 						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-monitoring",
+						"group_id":  "group_1",
+					},
+				},
+				{
+					Labels: map[string]string{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-etcd",
+						"group_id":  "group_1",
 					},
 				},
 			},
 			expected: []model.LabelSet{
 				{
-					"alertname": "KubeNodeNotReady",
+					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-monitoring",
-					"silenced":  "false",
+					"group_id":  "group_1",
+					"silenced":  "true",
 				},
 				{
 					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-etcd",
+					"group_id":  "group_1",
 					"silenced":  "true",
 				},
 			},
 			wantErr: nil,
 		},
 		{
-			name: "unhappy path - alert manager client gets an error",
+			name: "not all alerts are silenced",
+			args: args{
+				alerts: []model.LabelSet{
+					{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-monitoring",
+						"group_id":  "group_1",
+					},
+					{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-etcd",
+						"group_id":  "group_1",
+					},
+				},
+			},
+			silenced: []models.Alert{
+				{
+					Labels: map[string]string{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-monitoring",
+						"group_id":  "group_1",
+					},
+				},
+			},
+			expected: []model.LabelSet{
+				{
+					"alertname": "KubePodCrashLooping",
+					"namespace": "openshift-monitoring",
+					"group_id":  "group_1",
+					"silenced":  "false",
+				},
+				{
+					"alertname": "KubePodCrashLooping",
+					"namespace": "openshift-etcd",
+					"group_id":  "group_1",
+					"silenced":  "false",
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "not alerts are silenced",
+			args: args{
+				alerts: []model.LabelSet{
+					{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-monitoring",
+						"group_id":  "group_1",
+					},
+					{
+						"alertname": "KubePodCrashLooping",
+						"namespace": "openshift-etcd",
+						"group_id":  "group_1",
+					},
+				},
+			},
+			expected: []model.LabelSet{
+				{
+					"alertname": "KubePodCrashLooping",
+					"namespace": "openshift-monitoring",
+					"group_id":  "group_1",
+					"silenced":  "false",
+				},
+				{
+					"alertname": "KubePodCrashLooping",
+					"namespace": "openshift-etcd",
+					"group_id":  "group_1",
+					"silenced":  "false",
+				},
+			},
+			wantErr: nil,
+		},
+		{
+			name: "unhappy path, alertmanager error",
 			args: args{
 				alerts: []model.LabelSet{
 					{

@@ -185,10 +185,6 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 		return err
 	}
 
-	if p.groupsCollection != nil {
-		alerts = p.assignAlertsToGroups(alerts, t)
-	}
-
 	healthMap := MapAlerts(alerts)
 	healthMap = dedupHealthMaps(healthMap)
 
@@ -211,6 +207,10 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 	alerts, err := p.loader.LoadAlerts(ctx, t)
 	if err != nil {
 		return nil, err
+	}
+
+	if p.groupsCollection != nil {
+		alerts = p.assignAlertsToGroups(alerts, t)
 	}
 
 	alerts, err = p.evaluateSilences(alerts)
@@ -238,44 +238,22 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 		silencedAlertsMap[labelKey] = append(silencedAlertsMap[labelKey], silencedAlert)
 	}
 
-	for i := range alerts {
-		alertName := string(alerts[i][AlertNameLabelKey])
-		// initially default all alerts to silenced=false
-		// this will be updated if following condition are met
-		alerts[i]["silenced"] = "false"
-
-		silencedAlerts, nameIsSilenced := silencedAlertsMap[alertName]
-		if !nameIsSilenced {
-			continue
+	// cluster alerts by group_id
+	groupedAlerts := make(map[string][]model.LabelSet)
+	for _, alert := range alerts {
+		groupID := string(alert["group_id"])
+		if _, f := groupedAlerts[groupID]; !f {
+			groupedAlerts[groupID] = []model.LabelSet{}
 		}
-
-		// An `alertname` can apply to multiple alerts with different labels.
-		// We must iterate through the labels of each alert with the same `alertname`
-		// to find the specific silence that applies.
-		// For example, `{alertname="Alert1", namespace="foo"}` and
-		// `{alertname="Alert1", namespace="bar"}` are distinct alerts.
-		// A silence on `{alertname="Alert1", namespace="foo"}` will only silence the first alert.
-		for _, silencedAlert := range silencedAlerts {
-			if silencedAlert.Labels == nil {
-				continue
-			}
-			// Convert silence labels to model.LabelSet
-			silenceLabels := make(model.LabelSet)
-			for k, v := range silencedAlert.Labels {
-				silenceLabels[model.LabelName(k)] = model.LabelValue(v)
-			}
-			// Use LabelsIntersectionMatcher to check for an equal intersection between the silence and the alert
-			subsetMatcher := common.LabelsIntersectionMatcher{Labels: silenceLabels}
-			match, _ := subsetMatcher.Matches(alerts[i])
-			if match {
-				alerts[i]["silenced"] = "true"
-				break
-			}
-		}
-
+		groupedAlerts[groupID] = append(groupedAlerts[groupID], alert)
 	}
 
-	return alerts, nil
+	silencedAlerts := make([]model.LabelSet, 0, len(alerts))
+	for _, group := range groupedAlerts {
+		silencedAlerts = append(silencedAlerts, calculateGroupSilence(group, silencedAlertsMap)...)
+	}
+
+	return silencedAlerts, nil
 }
 
 func (p *processor) computeSeverityCountMetrics(alertsHealthMap []ComponentHealthMap) []prom.Metric {
@@ -340,6 +318,54 @@ func (p *processor) updateComponentsMetrics() {
 		})
 	}
 	p.componentsMetrics.Update(metrics)
+}
+
+func calculateGroupSilence(alerts []model.LabelSet, silences map[string][]models.Alert) []model.LabelSet {
+	// If all the alerts belonging to the group are silenced
+	// they will be marked all as silenced="true"
+	// otherwise they will be marked all as silenced = "false"
+
+	silenced := "true"
+	for _, alert := range alerts {
+		if !isAlertSilenced(alert, silences) {
+			silenced = "false"
+			break
+		}
+	}
+
+	for i := range alerts {
+		alerts[i]["silenced"] = model.LabelValue(silenced)
+	}
+
+	return alerts
+}
+
+func isAlertSilenced(alert model.LabelSet, silences map[string][]models.Alert) bool {
+	alertName := string(alert[AlertNameLabelKey])
+	silencedAlerts, nameIsSilenced := silences[alertName]
+	if !nameIsSilenced {
+		return false
+	}
+	// An `alertname` can apply to multiple alerts with different labels.
+	// We must iterate through the labels of each alert with the same `alertname`
+	// to find the specific silence that applies.
+	// For example, `{alertname="Alert1", namespace="foo"}` and
+	// `{alertname="Alert1", namespace="bar"}` are distinct alerts.
+	// A silence on `{alertname="Alert1", namespace="foo"}` will only silence the first alert.
+	for _, silencedAlert := range silencedAlerts {
+		// Convert silence labels to model.LabelSet
+		silenceLabels := make(model.LabelSet)
+		for k, v := range silencedAlert.Labels {
+			silenceLabels[model.LabelName(k)] = model.LabelValue(v)
+		}
+		// Use LabelsIntersectionMatcher to check for an equal intersection between the silence and the alert
+		matcher := common.LabelsIntersectionMatcher{Labels: silenceLabels}
+		match, _ := matcher.Matches(alert)
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 type ComponentRank struct {
