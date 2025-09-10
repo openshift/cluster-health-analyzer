@@ -1,7 +1,9 @@
 package common
 
 import (
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/prometheus/common/model"
@@ -201,12 +203,7 @@ func (l LabelsIntersectionMatcher) Matches(labels model.LabelSet) (bool, []model
 		return false, nil
 	}
 
-	names := make([]model.LabelName, 0, len(intersection))
-	for k := range intersection {
-		names = append(names, k)
-	}
-
-	return true, names
+	return true, slices.Collect(maps.Keys(intersection))
 }
 
 func (l LabelsIntersectionMatcher) Equals(other LabelsMatcher) bool {
