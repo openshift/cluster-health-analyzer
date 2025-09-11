@@ -232,9 +232,6 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	silencedAlertsMap := make(map[string][]models.Alert, len(silenced))
 	for _, silencedAlert := range silenced {
 		labelKey := silencedAlert.Labels[AlertNameLabelKey]
-		if _, f := silencedAlertsMap[labelKey]; !f {
-			silencedAlertsMap[labelKey] = []models.Alert{}
-		}
 		silencedAlertsMap[labelKey] = append(silencedAlertsMap[labelKey], silencedAlert)
 	}
 
@@ -242,9 +239,6 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	groupedAlerts := make(map[string][]model.LabelSet)
 	for _, alert := range alerts {
 		groupID := string(alert["group_id"])
-		if _, f := groupedAlerts[groupID]; !f {
-			groupedAlerts[groupID] = []model.LabelSet{}
-		}
 		groupedAlerts[groupID] = append(groupedAlerts[groupID], alert)
 	}
 
