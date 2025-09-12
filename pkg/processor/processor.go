@@ -4,6 +4,7 @@ package processor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -222,6 +223,15 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 }
 
 func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet, error) {
+	type silenceEvalGroup struct {
+		groupID        string
+		alertName      string
+		namespace      string
+		severity       string
+		originalAlerts []model.LabelSet
+		allSilenced    bool
+	}
+
 	// get all silenced alerts from alertmanager
 	silenced, err := p.amLoader.SilencedAlerts()
 	if err != nil {
@@ -235,19 +245,52 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 		silencedAlertsMap[labelKey] = append(silencedAlertsMap[labelKey], silencedAlert)
 	}
 
-	// cluster alerts by group_id
-	groupedAlerts := make(map[string][]model.LabelSet)
+	// Group alerts by consolidated key
+	silenceEvalGroups := make(map[string]*silenceEvalGroup)
+
 	for _, alert := range alerts {
-		groupID := string(alert["group_id"])
-		groupedAlerts[groupID] = append(groupedAlerts[groupID], alert)
+		key := fmt.Sprintf(
+			"%s|%s|%s|%s",
+			string(alert["group_id"]),
+			string(alert["alertname"]),
+			string(alert["namespace"]),
+			string(alert["severity"]),
+		)
+
+		if group, exists := silenceEvalGroups[key]; exists {
+			group.originalAlerts = append(group.originalAlerts, alert)
+			continue
+		}
+
+		silenceEvalGroups[key] = &silenceEvalGroup{
+			groupID:        string(alert["group_id"]),
+			alertName:      string(alert["alertname"]),
+			namespace:      string(alert["namespace"]),
+			severity:       string(alert["severity"]),
+			originalAlerts: []model.LabelSet{alert},
+		}
 	}
 
-	silencedAlerts := make([]model.LabelSet, 0, len(alerts))
-	for _, group := range groupedAlerts {
-		silencedAlerts = append(silencedAlerts, calculateGroupSilence(group, silencedAlertsMap)...)
+	// Evaluate silence for each group
+	for _, group := range silenceEvalGroups {
+		allSilenced := true
+		for _, alert := range group.originalAlerts {
+			if !isAlertSilenced(alert, silencedAlertsMap) {
+				allSilenced = false
+				break
+			}
+		}
+		group.allSilenced = allSilenced
 	}
 
-	return silencedAlerts, nil
+	for _, group := range silenceEvalGroups {
+		silencedValue := fmt.Sprintf("%t", group.allSilenced)
+		for i := range group.originalAlerts {
+			group.originalAlerts[i]["silenced"] = model.LabelValue(silencedValue)
+		}
+	}
+
+	return alerts, nil
 }
 
 func (p *processor) computeSeverityCountMetrics(alertsHealthMap []ComponentHealthMap) []prom.Metric {
@@ -312,26 +355,6 @@ func (p *processor) updateComponentsMetrics() {
 		})
 	}
 	p.componentsMetrics.Update(metrics)
-}
-
-func calculateGroupSilence(alerts []model.LabelSet, silences map[string][]models.Alert) []model.LabelSet {
-	// If all the alerts belonging to the group are silenced
-	// they will be marked all as silenced="true"
-	// otherwise they will be marked all as silenced = "false"
-
-	silenced := "true"
-	for _, alert := range alerts {
-		if !isAlertSilenced(alert, silences) {
-			silenced = "false"
-			break
-		}
-	}
-
-	for i := range alerts {
-		alerts[i]["silenced"] = model.LabelValue(silenced)
-	}
-
-	return alerts
 }
 
 func isAlertSilenced(alert model.LabelSet, silences map[string][]models.Alert) bool {

@@ -222,17 +222,27 @@ func Test_evaluateSilences(t *testing.T) {
 		wantErr         error
 	}{
 		{
-			name: "all alerts are silenced",
+			name: "all alerts within same groupID with the same triple (alertname, namespace, severity) are silenced",
 			args: args{
 				alerts: []model.LabelSet{
 					{
 						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "foo",
 						"group_id":  "group_1",
 					},
 					{
 						"alertname": "KubePodCrashLooping",
-						"namespace": "openshift-etcd",
+						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "bar",
+						"group_id":  "group_1",
+					},
+					{
+						"alertname": "UpdateAvailable",
+						"namespace": "openshift-monitoring",
+						"severity":  "info",
 						"group_id":  "group_1",
 					},
 				},
@@ -242,13 +252,17 @@ func Test_evaluateSilences(t *testing.T) {
 					Labels: map[string]string{
 						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "foo",
 						"group_id":  "group_1",
 					},
 				},
 				{
 					Labels: map[string]string{
 						"alertname": "KubePodCrashLooping",
-						"namespace": "openshift-etcd",
+						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "bar",
 						"group_id":  "group_1",
 					},
 				},
@@ -257,30 +271,45 @@ func Test_evaluateSilences(t *testing.T) {
 				{
 					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-monitoring",
+					"severity":  "warning",
 					"group_id":  "group_1",
+					"pod":       "foo",
 					"silenced":  "true",
 				},
 				{
 					"alertname": "KubePodCrashLooping",
-					"namespace": "openshift-etcd",
+					"namespace": "openshift-monitoring",
 					"group_id":  "group_1",
+					"severity":  "warning",
+					"pod":       "bar",
 					"silenced":  "true",
+				},
+				{
+					"alertname": "UpdateAvailable",
+					"namespace": "openshift-monitoring",
+					"severity":  "info",
+					"group_id":  "group_1",
+					"silenced":  "false",
 				},
 			},
 			wantErr: nil,
 		},
 		{
-			name: "not all alerts are silenced",
+			name: "not all alerts in the group are silenced",
 			args: args{
 				alerts: []model.LabelSet{
 					{
 						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "foo",
 						"group_id":  "group_1",
 					},
 					{
 						"alertname": "KubePodCrashLooping",
-						"namespace": "openshift-etcd",
+						"namespace": "openshift-monitoring",
+						"severity":  "warning",
+						"pod":       "bar",
 						"group_id":  "group_1",
 					},
 				},
@@ -290,7 +319,9 @@ func Test_evaluateSilences(t *testing.T) {
 					Labels: map[string]string{
 						"alertname": "KubePodCrashLooping",
 						"namespace": "openshift-monitoring",
+						"severity":  "warning",
 						"group_id":  "group_1",
+						"pod":       "foo",
 					},
 				},
 			},
@@ -298,44 +329,16 @@ func Test_evaluateSilences(t *testing.T) {
 				{
 					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-monitoring",
+					"severity":  "warning",
+					"pod":       "foo",
 					"group_id":  "group_1",
 					"silenced":  "false",
 				},
-				{
-					"alertname": "KubePodCrashLooping",
-					"namespace": "openshift-etcd",
-					"group_id":  "group_1",
-					"silenced":  "false",
-				},
-			},
-			wantErr: nil,
-		},
-		{
-			name: "not alerts are silenced",
-			args: args{
-				alerts: []model.LabelSet{
-					{
-						"alertname": "KubePodCrashLooping",
-						"namespace": "openshift-monitoring",
-						"group_id":  "group_1",
-					},
-					{
-						"alertname": "KubePodCrashLooping",
-						"namespace": "openshift-etcd",
-						"group_id":  "group_1",
-					},
-				},
-			},
-			expected: []model.LabelSet{
 				{
 					"alertname": "KubePodCrashLooping",
 					"namespace": "openshift-monitoring",
-					"group_id":  "group_1",
-					"silenced":  "false",
-				},
-				{
-					"alertname": "KubePodCrashLooping",
-					"namespace": "openshift-etcd",
+					"severity":  "warning",
+					"pod":       "bar",
 					"group_id":  "group_1",
 					"silenced":  "false",
 				},
@@ -367,7 +370,7 @@ func Test_evaluateSilences(t *testing.T) {
 				amLoader: mocks.NewMockAlertLoader(nil, tt.silenced, tt.alertManagerErr),
 			}
 			got, err := testProcessor.evaluateSilences(tt.args.alerts)
-			assert.Equal(t, tt.expected, got)
+			assert.ElementsMatch(t, tt.expected, got)
 			assert.Equal(t, tt.wantErr, err)
 		})
 	}
