@@ -229,7 +229,6 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 		namespace      string
 		severity       string
 		originalAlerts []model.LabelSet
-		allSilenced    bool
 	}
 
 	// get all silenced alerts from alertmanager
@@ -280,11 +279,8 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 				break
 			}
 		}
-		group.allSilenced = allSilenced
-	}
 
-	for _, group := range silenceEvalGroups {
-		silencedValue := fmt.Sprintf("%t", group.allSilenced)
+		silencedValue := fmt.Sprintf("%t", allSilenced)
 		for i := range group.originalAlerts {
 			group.originalAlerts[i]["silenced"] = model.LabelValue(silencedValue)
 		}

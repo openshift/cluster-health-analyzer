@@ -212,15 +212,5 @@ func (l LabelsIntersectionMatcher) Equals(other LabelsMatcher) bool {
 		return false
 	}
 
-	if len(l.Labels) != len(o.Labels) {
-		return false
-	}
-
-	for k, v := range l.Labels {
-		if label, f := o.Labels[k]; !f || label != v {
-			return false
-		}
-	}
-
-	return true
+	return maps.Equal(l.Labels, o.Labels)
 }
