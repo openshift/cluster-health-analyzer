@@ -1,7 +1,9 @@
 package common
 
 import (
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/prometheus/common/model"
@@ -9,7 +11,8 @@ import (
 
 const SrcLabelPrefix = "src_"
 
-// srcLabels returns a map of labels that are not internal.
+// SrcLabels returns a map of labels that are not internal.
+//
 // These labels are used for matching underlying metrics (e.g. alerts).
 func SrcLabels(labels model.Metric) model.LabelSet {
 	ret := make(model.LabelSet)
@@ -172,4 +175,42 @@ func equalsNoOrder(a, b []string) bool {
 		seen[v]--
 	}
 	return true
+}
+
+// LabelsIntersectionMatcher implements LabelsMatcher by spefically matching the intersection between sets
+type LabelsIntersectionMatcher struct {
+	Labels model.LabelSet
+}
+
+func (l LabelsIntersectionMatcher) Matches(labels model.LabelSet) (bool, []model.LabelName) {
+	intersection := make(map[model.LabelName]struct{})
+
+	for k, v := range l.Labels {
+		if label, f := labels[k]; f {
+
+			// if they are not equal intersection does not match
+			if label != v {
+				return false, nil
+			}
+
+			// if they are equal save the model.LabelName of common labels
+			intersection[k] = struct{}{}
+		}
+	}
+
+	if len(intersection) == 0 {
+		// no intersection
+		return false, nil
+	}
+
+	return true, slices.Collect(maps.Keys(intersection))
+}
+
+func (l LabelsIntersectionMatcher) Equals(other LabelsMatcher) bool {
+	o, ok := other.(LabelsIntersectionMatcher)
+	if !ok {
+		return false
+	}
+
+	return maps.Equal(l.Labels, o.Labels)
 }

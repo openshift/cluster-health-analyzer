@@ -4,11 +4,14 @@ package processor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
+	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -183,10 +186,6 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 		return err
 	}
 
-	if p.groupsCollection != nil {
-		alerts = p.assignAlertsToGroups(alerts, t)
-	}
-
 	healthMap := MapAlerts(alerts)
 	healthMap = dedupHealthMaps(healthMap)
 
@@ -211,6 +210,10 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 		return nil, err
 	}
 
+	if p.groupsCollection != nil {
+		alerts = p.assignAlertsToGroups(alerts, t)
+	}
+
 	alerts, err = p.evaluateSilences(alerts)
 	if err != nil {
 		return nil, err
@@ -220,6 +223,14 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 }
 
 func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet, error) {
+	type silenceEvalGroup struct {
+		groupID        string
+		alertName      string
+		namespace      string
+		severity       string
+		originalAlerts []model.LabelSet
+	}
+
 	// get all silenced alerts from alertmanager
 	silenced, err := p.amLoader.SilencedAlerts()
 	if err != nil {
@@ -227,17 +238,51 @@ func (p *processor) evaluateSilences(alerts []model.LabelSet) ([]model.LabelSet,
 	}
 
 	// convert slice to temporary map for better lookup
-	silencedAlertsMap := make(map[string]struct{}, len(silenced))
+	silencedAlertsMap := make(map[string][]models.Alert, len(silenced))
 	for _, silencedAlert := range silenced {
-		silencedAlertsMap[silencedAlert.Labels[AlertNameLabelKey]] = struct{}{}
+		labelKey := silencedAlert.Labels[AlertNameLabelKey]
+		silencedAlertsMap[labelKey] = append(silencedAlertsMap[labelKey], silencedAlert)
 	}
 
-	for i := range len(alerts) {
-		alertName := string(alerts[i][AlertNameLabelKey])
-		if _, f := silencedAlertsMap[alertName]; f {
-			alerts[i]["silenced"] = "true"
-		} else {
-			alerts[i]["silenced"] = "false"
+	// Group alerts by consolidated key
+	silenceEvalGroups := make(map[string]*silenceEvalGroup)
+
+	for _, alert := range alerts {
+		key := fmt.Sprintf(
+			"%s|%s|%s|%s",
+			string(alert["group_id"]),
+			string(alert["alertname"]),
+			string(alert["namespace"]),
+			string(alert["severity"]),
+		)
+
+		if group, exists := silenceEvalGroups[key]; exists {
+			group.originalAlerts = append(group.originalAlerts, alert)
+			continue
+		}
+
+		silenceEvalGroups[key] = &silenceEvalGroup{
+			groupID:        string(alert["group_id"]),
+			alertName:      string(alert["alertname"]),
+			namespace:      string(alert["namespace"]),
+			severity:       string(alert["severity"]),
+			originalAlerts: []model.LabelSet{alert},
+		}
+	}
+
+	// Evaluate silence for each group
+	for _, group := range silenceEvalGroups {
+		allSilenced := true
+		for _, alert := range group.originalAlerts {
+			if !isAlertSilenced(alert, silencedAlertsMap) {
+				allSilenced = false
+				break
+			}
+		}
+
+		silencedValue := fmt.Sprintf("%t", allSilenced)
+		for i := range group.originalAlerts {
+			group.originalAlerts[i]["silenced"] = model.LabelValue(silencedValue)
 		}
 	}
 
@@ -306,6 +351,34 @@ func (p *processor) updateComponentsMetrics() {
 		})
 	}
 	p.componentsMetrics.Update(metrics)
+}
+
+func isAlertSilenced(alert model.LabelSet, silences map[string][]models.Alert) bool {
+	alertName := string(alert[AlertNameLabelKey])
+	silencedAlerts, nameIsSilenced := silences[alertName]
+	if !nameIsSilenced {
+		return false
+	}
+	// An `alertname` can apply to multiple alerts with different labels.
+	// We must iterate through the labels of each alert with the same `alertname`
+	// to find the specific silence that applies.
+	// For example, `{alertname="Alert1", namespace="foo"}` and
+	// `{alertname="Alert1", namespace="bar"}` are distinct alerts.
+	// A silence on `{alertname="Alert1", namespace="foo"}` will only silence the first alert.
+	for _, silencedAlert := range silencedAlerts {
+		// Convert silence labels to model.LabelSet
+		silenceLabels := make(model.LabelSet)
+		for k, v := range silencedAlert.Labels {
+			silenceLabels[model.LabelName(k)] = model.LabelValue(v)
+		}
+		// Use LabelsIntersectionMatcher to check for an equal intersection between the silence and the alert
+		matcher := common.LabelsIntersectionMatcher{Labels: silenceLabels}
+		match, _ := matcher.Matches(alert)
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 type ComponentRank struct {
