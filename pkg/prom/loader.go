@@ -1,5 +1,7 @@
 package prom
 
+//go:generate mockgen -package=mocks -mock_names=Loader=MockPrometheusLoader -source=loader.go -destination=../test/mocks/mock_prometheus_loader.go
+
 import (
 	"context"
 	"time"
@@ -20,6 +22,16 @@ type Loader interface {
 
 func NewLoader(prometheusURL string) (Loader, error) {
 	promClient, err := NewPrometheusClient(prometheusURL)
+	if err != nil {
+		return nil, err
+	}
+	return &loader{
+		api: v1.NewAPI(promClient),
+	}, nil
+}
+
+func NewLoaderWithToken(prometheusURL, token string) (Loader, error) {
+	promClient, err := NewPrometheusClientWithToken(prometheusURL, token)
 	if err != nil {
 		return nil, err
 	}

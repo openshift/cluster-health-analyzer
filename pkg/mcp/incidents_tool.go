@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -15,8 +16,8 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 	"github.com/prometheus/alertmanager/api/v2/models"
-	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,20 +28,45 @@ import (
 )
 
 type IncidentTool struct {
-	mcp.Tool
+	Tool mcp.Tool
+	cfg  incidentToolCfg
+	// the followings allow to use mocked instance of needed clients for testing
+	getPrometheusLoaderFn   func(string, string) (prom.Loader, error)
+	getAlertManagerLoaderFn func(string, string) (alertmanager.Loader, error)
+}
 
+type incidentToolCfg struct {
 	promURL         string
 	alertManagerURL string
 	consoleURL      string
-
-	// the followings allow to use mocked instance of needed clients for testing
-	getPrometheusClientFn   func(string, string) (api.Client, error)
-	getAlertManagerClientFn func(string, string) (alertmanager.Loader, error)
 }
+
+var (
+	defaultMcpGetIncidentsTool = mcp.Tool{
+		Name: "get_incidents",
+		Description: `List the current firing incidents in the cluster. 
+		One incident is a group of related alerts that are likely triggered by the same root cause.
+		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
+		Annotations: mcp.ToolAnnotation{
+			Title:        "Provides information about Incidents in the cluster",
+			ReadOnlyHint: utils.Ptr(true),
+		},
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"max_age_hours": map[string]interface{}{
+					"type":        "number",
+					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					"minimum":     1,
+					"maximum":     360,
+				},
+			},
+		},
+	}
+)
 
 // NewIncidentsTool creates a new MCP tool for the incidents
 func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
-	readOnly := true
 	var err error
 
 	consoleURL, err := getConsoleURL()
@@ -49,32 +75,14 @@ func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
 	}
 
 	return IncidentTool{
-		mcp.Tool{
-			Name: "get_incidents",
-			Description: `List the current firing incidents in the cluster. 
-		One incident is a group of related alerts that are likely triggered by the same root cause.
-		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
-			Annotations: mcp.ToolAnnotation{
-				Title:        "Provides information about Incidents in the cluster",
-				ReadOnlyHint: &readOnly,
-			},
-			InputSchema: mcp.ToolInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"max_age_hours": map[string]interface{}{
-						"type":        "number",
-						"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
-						"minimum":     1,
-						"maximum":     360,
-					},
-				},
-			},
+		Tool: defaultMcpGetIncidentsTool,
+		cfg: incidentToolCfg{
+			promURL:         promURL,
+			alertManagerURL: alertmanagerURL,
+			consoleURL:      consoleURL,
 		},
-		promURL,
-		alertmanagerURL,
-		consoleURL,
-		getPrometheusClient,
-		getAlertManagerClient,
+		getPrometheusLoaderFn:   defaultPrometheusLoader,
+		getAlertManagerLoaderFn: defaultAlertManagerLoader,
 	}
 }
 
@@ -88,16 +96,15 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		return nil, err
 	}
 
-	amClient, err := i.getAlertManagerClientFn(i.alertManagerURL, token)
+	amLoader, err := i.getAlertManagerLoaderFn(i.cfg.alertManagerURL, token)
 	if err != nil {
 		return nil, err
 	}
 
-	promClient, err := i.getPrometheusClientFn(i.promURL, token)
+	promLoader, err := i.getPrometheusLoaderFn(i.cfg.promURL, token)
 	if err != nil {
 		return nil, err
 	}
-	promAPI := v1.NewAPI(promClient)
 
 	maxAgeHours := 360 // 15 days default
 	if request.Params.Arguments != nil {
@@ -113,16 +120,13 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		Step:  300 * time.Second,
 	}
 
-	val, warning, err := promAPI.QueryRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange)
+	val, err := promLoader.LoadVectorRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange.Start, queryTimeRange.End, queryTimeRange.Step)
 	if err != nil {
-		slog.Error("Recieved error response from Prometheus", "error", err)
+		slog.Error("Received error response from Prometheus", "error", err)
 		return nil, err
 	}
-	if warning != nil {
-		slog.Warn("Prometheus query response", "warning", warning)
-	}
 
-	silences, err := amClient.SilencedAlerts()
+	silences, err := amLoader.SilencedAlerts()
 	if err != nil {
 		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
 		return nil, err
@@ -134,7 +138,7 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		return nil, err
 	}
 
-	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promAPI, queryTimeRange)
+	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange)
 	r := Response{
 		Incidents: Incidents{
 			Total:     len(incidents),
@@ -185,14 +189,11 @@ func processSampleTime(firstSample, lastSample model.SamplePair, qRange v1.Range
 }
 
 // transformPromValueToIncident transforms the metrics data to map of incidents
-func (i *IncidentTool) transformPromValueToIncident(data model.Value, qRange v1.Range) (map[string]Incident, error) {
-	dataVec, ok := data.(model.Matrix)
-	if !ok {
-		return nil, fmt.Errorf("cannot convert data to Prometheus model.Vector type")
-	}
+func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qRange v1.Range) (map[string]Incident, error) {
 
 	incidents := make(map[string]Incident, len(dataVec))
 	for _, v := range dataVec {
+
 		alertSeverity := v.Metric["src_severity"]
 		alertName := v.Metric["src_alertname"]
 
@@ -201,11 +202,11 @@ func (i *IncidentTool) transformPromValueToIncident(data model.Value, qRange v1.
 			continue
 		}
 
-		lastSample := v.Values[len(v.Values)-1]
-		firstSample := v.Values[0]
+		lastSample := v.Samples[len(v.Samples)-1]
+		firstSample := v.Samples[0]
 		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
 
-		labels := common.SrcLabels(v.Metric)
+		labels := common.SrcLabels(model.Metric(v.Metric))
 
 		healthyVal := processor.HealthValue(lastSample.Value)
 		groupId := string(v.Metric["group_id"])
@@ -251,8 +252,8 @@ func (i *IncidentTool) transformPromValueToIncident(data model.Value, qRange v1.
 					labels.String(): {},
 				},
 			}
-			if i.consoleURL != "" {
-				incident.URL = fmt.Sprintf("%s/monitoring/incidents?groupId=%s", i.consoleURL, groupId)
+			if i.cfg.consoleURL != "" {
+				incident.URL = fmt.Sprintf("%s/monitoring/incidents?groupId=%s", i.cfg.consoleURL, groupId)
 			}
 			incident.UpdateStatus()
 			incidents[groupId] = incident
@@ -275,32 +276,26 @@ func getTokenFromCtx(ctx context.Context) (string, error) {
 // getAlertDataForIncidents queries Prometheus for firing alerts from the last 15 days (to have
 // some starting time) and then maps (the alert identifier is composed by name and namespace)
 // the active alerts to the provided map of incidents. It returns slice of the incidents.
-func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, silences []models.Alert, promAPI v1.API, qRange v1.Range) []Incident {
-	v, _, err := promAPI.QueryRange(ctx, `ALERTS{alertstate!="pending"}`, qRange)
+func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, silences []models.Alert, promAPI prom.Loader, qRange v1.Range) []Incident {
+	alertData, err := promAPI.LoadVectorRange(ctx, `ALERTS{alertstate!="pending"}`, qRange.Start, qRange.End, qRange.Step)
 	if err != nil {
 		slog.Error("Failed to query firing alerts", "error", err)
-		return nil
-	}
-	alertData, ok := v.(model.Matrix)
-	if !ok {
-		slog.Error("Failed to convert alert data")
 		return nil
 	}
 
 	silencedAlertsMap := make(map[string][]models.Alert, len(silences))
 	for _, silencedAlert := range silences {
-		if _, f := silencedAlertsMap["alertname"]; f {
-			silencedAlertsMap["alertname"] = []models.Alert{}
+		if alertname, ok := silencedAlert.Labels["alertname"]; ok {
+			silencedAlertsMap[alertname] = append(silencedAlertsMap[alertname], silencedAlert)
 		}
-		silencedAlertsMap["alertname"] = append(silencedAlertsMap["alertname"], silencedAlert)
 	}
 
 	var alerts []model.LabelSet
 	for i := range alertData {
 		sample := alertData[i]
 		metric := model.LabelSet(sample.Metric)
-		firstSample := sample.Values[0]
-		lastSample := sample.Values[len(sample.Values)-1]
+		firstSample := sample.Samples[0]
+		lastSample := sample.Samples[len(sample.Samples)-1]
 		startTime, endTime := processSampleTime(firstSample, lastSample, qRange)
 
 		metric["start_time"] = model.LabelValue(formatToRFC3339(startTime))
@@ -315,7 +310,8 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 	var incidentsSlice []Incident
 	for _, inc := range incidents {
-		var updatedAlerts []model.LabelSet
+		updatedAlertsMap := make(map[string]model.LabelSet, len(inc.Alerts))
+
 		for _, alertInIncident := range inc.Alerts {
 			subsetMatcher := common.LabelsSubsetMatcher{Labels: alertInIncident}
 			for _, firingAlert := range alerts {
@@ -324,17 +320,36 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 					// the silencedAlertsMap is precomputed in order to contain all the silences grouped by alertname
 					// [Alert1] = [{alertname="Alert1", namespace="foo"}, alertname="Alert1", namespace="bar"]
-					if isAlertSilenced(firingAlert, silencedAlertsMap["alertname"]) {
-						firingAlert["silenced"] = "true"
-					} else {
-						firingAlert["silenced"] = "false"
+					alertname := string(firingAlert["alertname"])
+					namespace := string(firingAlert["namespace"])
+					severity := string(firingAlert["severity"])
+
+					key := fmt.Sprintf("%s|%s|%s", alertname, namespace, severity)
+
+					silenced := false
+					if isAlertSilenced(firingAlert, silencedAlertsMap[alertname]) {
+						silenced = true
 					}
 
-					updatedAlerts = append(updatedAlerts, cleanupLabels(firingAlert))
+					updatedAlert := cleanupLabels(firingAlert)
+
+					if _, f := updatedAlertsMap[key]; f {
+						lastSilenced, err := strconv.ParseBool(string(updatedAlertsMap[key]["silenced"]))
+						if err != nil {
+							slog.Error("failed to parse bool", "error", err)
+							return nil
+						}
+						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", lastSilenced && silenced))
+						updatedAlertsMap[key] = updatedAlert
+					} else {
+						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", silenced))
+						updatedAlertsMap[key] = updatedAlert
+					}
 				}
 			}
 		}
-		inc.Alerts = updatedAlerts
+
+		inc.Alerts = slices.Collect(maps.Values(updatedAlertsMap))
 		incidentsSlice = append(incidentsSlice, inc)
 	}
 	return incidentsSlice
@@ -350,6 +365,7 @@ func cleanupLabels(m model.LabelSet) model.LabelSet {
 	delete(updatedLS, "prometheus")
 	delete(updatedLS, "alertstate")
 	delete(updatedLS, "alertname")
+	delete(updatedLS, "pod")
 	return updatedLS
 }
 
@@ -382,16 +398,11 @@ func getConsoleURL() (string, error) {
 	return consoleURL, nil
 }
 
-func getPrometheusClient(promURL, token string) (api.Client, error) {
-	promClient, err := prom.NewPrometheusClientWithToken(promURL, token)
-	if err != nil {
-		slog.Error("Failed to initialize Prometheus client", "error", err)
-		return nil, err
-	}
-	return promClient, nil
+func defaultPrometheusLoader(promURL, token string) (prom.Loader, error) {
+	return prom.NewLoaderWithToken(promURL, token)
 }
 
-func getAlertManagerClient(alertManagerURL, token string) (alertmanager.Loader, error) {
+func defaultAlertManagerLoader(alertManagerURL, token string) (alertmanager.Loader, error) {
 	amClient, err := alertmanager.NewLoader(alertmanager.LoaderConfig{
 		AlertManagerURL: alertManagerURL,
 		Token:           token,
@@ -404,7 +415,7 @@ func getAlertManagerClient(alertManagerURL, token string) (alertmanager.Loader, 
 }
 
 func isAlertSilenced(alert model.LabelSet, silences []models.Alert) bool {
-	// The labels defined in an Alertmanager silence are a subset of the labels on an alert
+	// The labels defined in an Alertmanager silence are an intersection of the labels on an alert
 	// If all the common labels by alert and the silence matches we can assume that alert is silenced
 
 	for _, silence := range silences {
@@ -418,9 +429,9 @@ func isAlertSilenced(alert model.LabelSet, silences []models.Alert) bool {
 			silenceLabels[model.LabelName(silenceLabel)] = model.LabelValue(silenceValue)
 		}
 
-		// Use LabelsSubsetMatcher to check if silence labels match the alert
-		subsetMatcher := common.LabelsSubsetMatcher{Labels: silenceLabels}
-		match, _ := subsetMatcher.Matches(alert)
+		// Use LabelsIntersectionMatcher to check if silence labels match the alert
+		matcher := common.LabelsIntersectionMatcher{Labels: silenceLabels}
+		match, _ := matcher.Matches(alert)
 		if match {
 			return true
 		}

@@ -51,14 +51,21 @@ test-verbose:
 proxy:
 	./hack/listen-thanos.sh
 
-## run> run the server locally (requires prometheus running on http://localhost:9090)
+## run> run the server locally (requires prometheus and alertmanager runnning)
 .PHONY: run
 run:
 	go run ./main.go serve --disable-auth-for-testing
 
+## run-mcp> run the mcp server locally (requires prometheus and alertmanager running)
 .PHONY: run-mcp
 run-mcp:
 	go run ./main.go mcp
+
+## mocks> run go generate
+.PHONY: generate
+generate:
+	go generate ./...
+
 
 ## simulate> simulate test data and creates cluster-health-analyzer-openmetrics.txt in openmetrics format
 .PHONY: simulate

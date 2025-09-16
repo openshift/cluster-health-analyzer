@@ -1,5 +1,7 @@
 package alertmanager
 
+//go:generate mockgen -package=mocks -mock_names=Loader=MockAlertManagerLoader -source=loader.go -destination=../test/mocks/mock_alertmanager_loader.go
+
 import (
 	"crypto/tls"
 	"crypto/x509"

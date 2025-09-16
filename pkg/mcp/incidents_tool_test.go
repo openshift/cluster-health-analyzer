@@ -2,49 +2,272 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
+	"github.com/openshift/cluster-health-analyzer/pkg/prom"
+	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 )
 
+var (
+	testMcpTool = mcp.Tool{
+		Name: "get_incidents",
+		Description: `List the current firing incidents in the cluster. 
+		One incident is a group of related alerts that are likely triggered by the same root cause.
+		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
+		Annotations: mcp.ToolAnnotation{
+			Title: "Provides information about Incidents in the cluster",
+		},
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"max_age_hours": map[string]any{
+					"type":        "number",
+					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					"minimum":     1,
+					"maximum":     360,
+				},
+			},
+		},
+	}
+)
+
+func TestIncidentTool_IncidentsHandler(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	type args struct {
+		ctx     context.Context
+		request mcp.CallToolRequest
+	}
+
+	tests := []struct {
+		name           string
+		promLoader     prom.Loader
+		amLoader       alertmanager.Loader
+		args           args
+		expectedResult *mcp.CallToolResult
+		expectedErr    error
+	}{
+		{
+			name: "happy path",
+			promLoader: func() prom.Loader {
+				mocked := mocks.NewMockPrometheusLoader(ctrl)
+
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), processor.ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"group_id":      "123",
+							"src_alertname": "ClusterOperatorDown",
+							"src_namespace": "openshift-monitoring",
+							"src_severity":  "warning",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"group_id":      "123",
+							"src_alertname": "UpdateAvailable",
+							"src_namespace": "openshift-monitoring",
+							"src_severity":  "info",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+				}, nil)
+
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"alertname":  "ClusterOperatorDown",
+							"namespace":  "openshift-monitoring",
+							"severity":   "warning",
+							"pod":        "bar",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "ClusterOperatorDown",
+							"namespace":  "openshift-monitoring",
+							"severity":   "warning",
+							"pod":        "foo",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "UpdateAvailable",
+							"namespace":  "openshift-monitoring",
+							"severity":   "info",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+						},
+					},
+				}, nil)
+				return mocked
+			}(),
+			amLoader: func() alertmanager.Loader {
+				silencedAlerts := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "ClusterOperatorDown",
+							"namespace": "openshift-monitoring",
+							"severity":  "warning",
+							"pod":       "foo",
+						},
+					},
+					{
+						Labels: map[string]string{
+							"alertname": "UpdateAvailable",
+							"namespace": "openshift-monitoring",
+							"severity":  "info",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
+				return mocked
+			}(),
+			args: args{
+				ctx: context.WithValue(context.Background(), authHeaderStr, "test"),
+				request: mcp.CallToolRequest{
+					Params: mcp.CallToolParams{
+						Arguments: map[string]any{
+							"max_age_hours": "300",
+						},
+					},
+				},
+			},
+			expectedResult: func() *mcp.CallToolResult {
+				baseTime := model.Now().Add(-20 * time.Minute).Time()
+				r := Response{
+					Incidents: Incidents{
+						Total: 1,
+						Incidents: []Incident{
+							{
+								GroupId:            "123",
+								Severity:           "warning",
+								Status:             "firing",
+								StartTime:          baseTime.Add(19 * time.Minute).Format(time.RFC3339),
+								AffectedComponents: []string{""},
+								Alerts: []model.LabelSet{
+									{
+										"name":       "ClusterOperatorDown",
+										"namespace":  "openshift-monitoring",
+										"severity":   "warning",
+										"status":     "resolved",
+										"silenced":   "false",
+										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
+									},
+									{
+										"name":       "UpdateAvailable",
+										"namespace":  "openshift-monitoring",
+										"severity":   "info",
+										"status":     "resolved",
+										"silenced":   "true",
+										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
+									},
+								},
+							},
+						},
+					},
+				}
+				data, _ := json.Marshal(r)
+				return mcp.NewToolResultText(string(data))
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := IncidentTool{
+				Tool: testMcpTool,
+				getPrometheusLoaderFn: func(url, _ string) (prom.Loader, error) {
+					return tt.promLoader, nil
+				},
+				getAlertManagerLoaderFn: func(url, token string) (alertmanager.Loader, error) {
+					return tt.amLoader, nil
+				},
+			}
+			got, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request)
+			assert.Equal(t, tt.expectedResult, got)
+			assert.Equal(t, tt.expectedErr, err)
+		})
+	}
+
+}
+
 func TestTransformPromValueToIncident(t *testing.T) {
 	tests := []struct {
 		name              string
-		testInput         model.Value
+		testInput         prom.RangeVector
 		expectedIncidents map[string]Incident
 	}{
 		{
 			name: "Two alerts with same group_id are one incident",
-			testInput: model.Matrix{
-				&model.SampleStream{
-					Metric: model.Metric{
+			testInput: prom.RangeVector{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert1",
 						"group_id":      "1",
 						"src_severity":  "warning",
 						"component":     "monitoring",
 						"src_namespace": "openshift-monitoring",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     0,
 							Timestamp: model.Now().Add(-1 * time.Minute),
 						},
 					},
 				},
-				&model.SampleStream{
-					Metric: model.Metric{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert2",
 						"group_id":      "1",
 						"src_severity":  "warning",
 						"component":     "console",
 						"src_namespace": "openshift-console",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     0,
 							Timestamp: model.Now().Add(-1 * time.Minute),
@@ -73,31 +296,31 @@ func TestTransformPromValueToIncident(t *testing.T) {
 		},
 		{
 			name: "Two alerts with same group_id and same component are one incident",
-			testInput: model.Matrix{
-				&model.SampleStream{
-					Metric: model.Metric{
+			testInput: prom.RangeVector{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert1",
 						"group_id":      "1",
 						"src_severity":  "warning",
 						"component":     "monitoring",
 						"src_namespace": "openshift-monitoring",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     1,
 							Timestamp: model.Now().Add(-1 * time.Minute),
 						},
 					},
 				},
-				&model.SampleStream{
-					Metric: model.Metric{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert2",
 						"group_id":      "1",
 						"src_severity":  "warning",
 						"component":     "monitoring",
 						"src_namespace": "openshift-monitoring",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     0,
 							Timestamp: model.Now().Add(-1 * time.Minute),
@@ -126,45 +349,45 @@ func TestTransformPromValueToIncident(t *testing.T) {
 		},
 		{
 			name: "Two different incidents and alert with severity=None is ignored",
-			testInput: model.Matrix{
-				&model.SampleStream{
-					Metric: model.Metric{
+			testInput: prom.RangeVector{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert2",
 						"group_id":      "1",
 						"src_severity":  "warning",
 						"component":     "console",
 						"src_namespace": "openshift-console",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     1,
 							Timestamp: model.Now().Add(-25 * time.Minute),
 						},
 					},
 				},
-				&model.SampleStream{
-					Metric: model.Metric{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert3",
 						"group_id":      "2",
 						"src_severity":  "none",
 						"component":     "none",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     0,
 							Timestamp: model.Now().Add(-1 * time.Minute),
 						},
 					},
 				},
-				&model.SampleStream{
-					Metric: model.Metric{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert1",
 						"group_id":      "1",
 						"src_severity":  "critical",
 						"component":     "monitoring",
 						"src_namespace": "openshift-monitoring",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     2,
 							Timestamp: model.Now().Add(-25 * time.Minute),
@@ -175,15 +398,15 @@ func TestTransformPromValueToIncident(t *testing.T) {
 						},
 					},
 				},
-				&model.SampleStream{
-					Metric: model.Metric{
+				{
+					Metric: model.LabelSet{
 						"src_alertname": "Alert4",
 						"group_id":      "2",
 						"src_severity":  "warning",
 						"component":     "console",
 						"src_namespace": "openshift-console",
 					},
-					Values: []model.SamplePair{
+					Samples: []model.SamplePair{
 						{
 							Value:     1,
 							Timestamp: model.Now().Add(-15 * time.Minute),
@@ -243,51 +466,58 @@ func TestTransformPromValueToIncident(t *testing.T) {
 }
 
 func TestGetAlertDataForIncidents(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	tests := []struct {
 		name              string
-		activeAlerts      model.Matrix
+		promLoader        prom.Loader
 		incidentsMap      map[string]Incident
 		silencedAlerts    []models.Alert
 		expectedIncidents []Incident
 	}{
 		{
 			name: "Same alerts in different namespace are matched correctly",
-			activeAlerts: model.Matrix{
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "foo",
-						"alertstate": "firing",
-					},
-					Values: []model.SamplePair{
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-25 * time.Minute),
+			promLoader: func() prom.Loader {
+				mocked := mocks.NewMockPrometheusLoader(ctrl)
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "foo",
+							"alertstate": "firing",
 						},
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-1 * time.Minute),
-						},
-					},
-				},
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "bar",
-						"alertstate": "firing",
-					},
-					Values: []model.SamplePair{
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-24 * time.Minute),
-						},
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-1 * time.Minute),
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-25 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
 						},
 					},
-				},
-			},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "bar",
+							"alertstate": "firing",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-24 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+				}, nil)
+				return mocked
+			}(),
 			silencedAlerts: []models.Alert{
 				{
 					Labels: map[string]string{
@@ -329,44 +559,48 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 		},
 		{
 			name: "Same alert in more incidents",
-			activeAlerts: model.Matrix{
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "foo",
-						"alertstate": "resolved",
-					},
-					Values: []model.SamplePair{
-						{
-							Timestamp: model.Now().Add(-20 * time.Minute),
+			promLoader: func() prom.Loader {
+				mocked := mocks.NewMockPrometheusLoader(ctrl)
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "foo",
+							"alertstate": "resolved",
+						},
+						Samples: []model.SamplePair{
+							{
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
 						},
 					},
-				},
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "bar",
-						"alertstate": "resolved",
-					},
-					Values: []model.SamplePair{
-						{
-							Timestamp: model.Now().Add(-19 * time.Minute),
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "bar",
+							"alertstate": "resolved",
+						},
+						Samples: []model.SamplePair{
+							{
+								Timestamp: model.Now().Add(-19 * time.Minute),
+							},
 						},
 					},
-				},
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert2",
-						"namespace":  "bar",
-						"alertstate": "resolved",
-					},
-					Values: []model.SamplePair{
-						{
-							Timestamp: model.Now().Add(-19 * time.Minute),
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert2",
+							"namespace":  "bar",
+							"alertstate": "resolved",
+						},
+						Samples: []model.SamplePair{
+							{
+								Timestamp: model.Now().Add(-19 * time.Minute),
+							},
 						},
 					},
-				},
-			},
+				}, nil)
+				return mocked
+			}(),
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
@@ -442,69 +676,75 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			// A. Alert1, namespace=foo, pod=red
 			// B. Alert1, namespace=foo, pod=blue (same alertname and namespace with A. but differend pod name)
 			// C. Alert1, namespace=bar, pod=red (same alertname and pod name with A. but different namespace)
-			activeAlerts: model.Matrix{
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "foo",
-						"pod":        "red",
-						"alertstate": "firing",
-					},
-					Values: []model.SamplePair{
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-20 * time.Minute),
+			promLoader: func() prom.Loader {
+				mocked := mocks.NewMockPrometheusLoader(ctrl)
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "foo",
+							"pod":        "red",
+							"alertstate": "firing",
+							"severity":   "warning",
 						},
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-1 * time.Minute),
-						},
-					},
-				},
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "foo",
-						"pod":        "blue",
-						"alertstate": "firing",
-					},
-					Values: []model.SamplePair{
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-20 * time.Minute),
-						},
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-1 * time.Minute),
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
 						},
 					},
-				},
-				&model.SampleStream{
-					Metric: model.Metric{
-						"alertname":  "Alert1",
-						"namespace":  "bar",
-						"pod":        "red",
-						"alertstate": "firing",
-					},
-					Values: []model.SamplePair{
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-20 * time.Minute),
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "foo",
+							"pod":        "blue",
+							"alertstate": "firing",
+							"severity":   "warning",
 						},
-						{
-							Value:     1,
-							Timestamp: model.Now().Add(-1 * time.Minute),
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
 						},
 					},
-				},
-			},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "bar",
+							"pod":        "red",
+							"alertstate": "firing",
+							"severity":   "warning",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+				}, nil)
+				return mocked
+			}(),
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
 					Alerts: []model.LabelSet{
-						{"alertname": "Alert1", "namespace": "foo", "pod": "red"},
-						{"alertname": "Alert1", "namespace": "foo", "pod": "blue"},
-						{"alertname": "Alert1", "namespace": "bar", "pod": "red"},
+						{"alertname": "Alert1", "namespace": "foo", "severity": "warning"},
+						{"alertname": "Alert1", "namespace": "bar", "severity": "warning"},
 					},
 				},
 			},
@@ -513,7 +753,16 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 					Labels: map[string]string{
 						"alertname": "Alert1",
 						"namespace": "foo",
-						"pod":       "blue",
+						"severity":  "warning",
+						"pod":       "red",
+					},
+				},
+				{
+					Labels: map[string]string{
+						"alertname": "Alert1",
+						"namespace": "bar",
+						"severity":  "warning",
+						"pod":       "red",
 					},
 				},
 			},
@@ -526,23 +775,15 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"namespace":  "foo",
 							"status":     "firing",
 							"silenced":   "false",
-							"pod":        "red",
-							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
-						},
-						{
-							"name":       "Alert1",
-							"namespace":  "foo",
-							"status":     "firing",
-							"silenced":   "true",
-							"pod":        "blue",
+							"severity":   "warning",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
 							"name":       "Alert1",
 							"namespace":  "bar",
 							"status":     "firing",
-							"silenced":   "false",
-							"pod":        "red",
+							"silenced":   "true",
+							"severity":   "warning",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 					},
@@ -554,106 +795,12 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			mockPromApi := MockPromAPI{modelValue: tt.activeAlerts}
-			incidents := getAlertDataForIncidents(ctx, tt.incidentsMap, tt.silencedAlerts, &mockPromApi, v1.Range{
+			incidents := getAlertDataForIncidents(ctx, tt.incidentsMap, tt.silencedAlerts, tt.promLoader, v1.Range{
 				Start: time.Now().Add(-30 * time.Minute),
 				End:   time.Now(),
 				Step:  300 * time.Second,
 			})
-			assert.Equal(t, tt.expectedIncidents, incidents)
+			assert.ElementsMatch(t, tt.expectedIncidents, incidents)
 		})
 	}
-}
-
-type MockPromAPI struct {
-	modelValue model.Value
-}
-
-func (m *MockPromAPI) Query(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error) {
-	return m.modelValue, nil, nil
-}
-
-func (m *MockPromAPI) Alerts(ctx context.Context) (v1.AlertsResult, error) {
-	// noop
-	return v1.AlertsResult{}, nil
-}
-
-func (m *MockPromAPI) AlertManagers(ctx context.Context) (v1.AlertManagersResult, error) {
-	// noop
-	return v1.AlertManagersResult{}, nil
-}
-
-func (m *MockPromAPI) Buildinfo(ctx context.Context) (v1.BuildinfoResult, error) {
-	//noop
-	return v1.BuildinfoResult{}, nil
-}
-
-func (m *MockPromAPI) Config(ctx context.Context) (v1.ConfigResult, error) {
-	//noop
-	return v1.ConfigResult{}, nil
-}
-
-func (m *MockPromAPI) Flags(ctx context.Context) (v1.FlagsResult, error) {
-	//noop
-	return nil, nil
-}
-func (m *MockPromAPI) CleanTombstones(ctx context.Context) error {
-	// noop
-	return nil
-}
-
-func (m *MockPromAPI) DeleteSeries(ctx context.Context, matches []string, startTime, endTime time.Time) error {
-	// noop
-	return nil
-}
-
-func (m *MockPromAPI) LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time) ([]string, v1.Warnings, error) {
-	return nil, nil, nil
-}
-
-func (m *MockPromAPI) LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time) (model.LabelValues, v1.Warnings, error) {
-	return nil, nil, nil
-}
-
-func (m *MockPromAPI) Metadata(ctx context.Context, metric, limit string) (map[string][]v1.Metadata, error) {
-	return nil, nil
-}
-
-func (m *MockPromAPI) QueryExemplars(ctx context.Context, query string, startTime, endTime time.Time) ([]v1.ExemplarQueryResult, error) {
-	return nil, nil
-}
-
-func (m *MockPromAPI) QueryRange(ctx context.Context, query string, r v1.Range, opts ...v1.Option) (model.Value, v1.Warnings, error) {
-	return m.modelValue, nil, nil
-}
-
-func (m *MockPromAPI) Rules(ctx context.Context) (v1.RulesResult, error) {
-	return v1.RulesResult{}, nil
-}
-
-func (m *MockPromAPI) Runtimeinfo(ctx context.Context) (v1.RuntimeinfoResult, error) {
-	return v1.RuntimeinfoResult{}, nil
-}
-
-func (m *MockPromAPI) Series(ctx context.Context, matches []string, startTime, endTime time.Time) ([]model.LabelSet, v1.Warnings, error) {
-	return nil, nil, nil
-}
-
-func (m *MockPromAPI) Snapshot(ctx context.Context, skipHead bool) (v1.SnapshotResult, error) {
-	return v1.SnapshotResult{}, nil
-}
-
-func (m *MockPromAPI) TSDB(ctx context.Context) (v1.TSDBResult, error) {
-	return v1.TSDBResult{}, nil
-}
-func (m *MockPromAPI) Targets(ctx context.Context) (v1.TargetsResult, error) {
-	return v1.TargetsResult{}, nil
-}
-
-func (m *MockPromAPI) TargetsMetadata(ctx context.Context, matchTarget, metric, limit string) ([]v1.MetricMetadata, error) {
-	return nil, nil
-}
-
-func (m *MockPromAPI) WalReplay(ctx context.Context) (v1.WalReplayStatus, error) {
-	return v1.WalReplayStatus{}, nil
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
-	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
@@ -51,7 +50,8 @@ func TestEvaluateComponentsHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockAlertLoader := mocks.NewMockAlertLoader(
+			// TODO refactor to use mocks.NewMockAlertLoader instead
+			mockAlertLoader := NewMockAlertLoader(
 				[]models.Alert{
 					{
 						Labels: models.LabelSet{
@@ -307,7 +307,8 @@ func TestEvaluateComponentHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockAlertLoader := mocks.NewMockAlertLoader(
+			// TODO refactor to use mocks.NewMockAlertLoader instead
+			mockAlertLoader := NewMockAlertLoader(
 				[]models.Alert{
 					{
 						Labels: models.LabelSet{
