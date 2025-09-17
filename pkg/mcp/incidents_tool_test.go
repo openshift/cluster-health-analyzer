@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 	"time"
 
@@ -800,7 +801,37 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				End:   time.Now(),
 				Step:  300 * time.Second,
 			})
+
+			// Sort the actual and expected alerts slices before comparing to avoid test flakyness
+			for i := range incidents {
+				sortAlerts(incidents[i].Alerts)
+			}
+
+			for i := range tt.expectedIncidents {
+				sortAlerts(tt.expectedIncidents[i].Alerts)
+			}
+
 			assert.ElementsMatch(t, tt.expectedIncidents, incidents)
 		})
 	}
+}
+
+func sortAlerts(alerts []model.LabelSet) {
+	sort.Slice(alerts, func(i, j int) bool {
+		a := alerts[i]
+		b := alerts[j]
+
+		// First, sort by 'name'
+		if a["name"] != b["name"] {
+			return a["name"] < b["name"]
+		}
+
+		// Then, sort by 'namespace' if names are the same
+		if a["namespace"] != b["namespace"] {
+			return a["namespace"] < b["namespace"]
+		}
+
+		// Finally, sort by 'pod' or another unique label to guarantee stability
+		return a["pod"] < b["pod"]
+	})
 }
