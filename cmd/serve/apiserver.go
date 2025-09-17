@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -99,6 +100,17 @@ func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 
 	// We will be serving out own `/metrics` endpoint.
 	serverConfig.EnableMetrics = false
+	// use only the secured cipher suites
+	serverConfig.SecureServing.CipherSuites = getCipherSuites()
 
 	return serverConfig, nil
+}
+
+func getCipherSuites() []uint16 {
+	secureCiphers := tls.CipherSuites()
+	cipherSuites := make([]uint16, len(secureCiphers))
+	for i, cipher := range secureCiphers {
+		cipherSuites[i] = cipher.ID
+	}
+	return cipherSuites
 }
