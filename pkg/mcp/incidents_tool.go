@@ -122,7 +122,21 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		slog.Error("Failed to marshal the Incident data", "error", err)
 		return nil, err
 	}
-	return mcp.NewToolResultText(string(data)), nil
+
+	// Format response with instructions for better LLM interpretation
+	responseTemplate := `<DATA>
+%s
+</DATA>
+<INSTRUCTIONS>
+- An incident is a group of related alerts. Base your analysis on the alerts to understand the incident. 
+- Don't confuse or mix the concepts of incident and alert during your explanation.
+- For each incident, analyze its alerts to identify the affected component and the core problem. 
+- Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
+- If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
+</INSTRUCTIONS>`
+
+	response := fmt.Sprintf(responseTemplate, string(data))
+	return mcp.NewToolResultText(response), nil
 }
 
 // formatToRFC3339 formats a time to RFC3339 string, returns empty string for zero time
