@@ -112,11 +112,13 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 
 	amLoader, err := i.getAlertManagerLoaderFn(i.cfg.alertManagerURL, token)
 	if err != nil {
+		slog.Error("Failed to initialize AlertManager client", "error", err)
 		return nil, err
 	}
 
 	promLoader, err := i.getPrometheusLoaderFn(i.cfg.promURL, token)
 	if err != nil {
+		slog.Error("Failed to initialize Prometheus client", "error", err)
 		return nil, err
 	}
 
@@ -405,15 +407,10 @@ func defaultPrometheusLoader(promURL, token string) (prom.Loader, error) {
 }
 
 func defaultAlertManagerLoader(alertManagerURL, token string) (alertmanager.Loader, error) {
-	amClient, err := alertmanager.NewLoader(alertmanager.LoaderConfig{
+	return alertmanager.NewLoader(alertmanager.LoaderConfig{
 		AlertManagerURL: alertManagerURL,
 		Token:           token,
 	})
-	if err != nil {
-		slog.Error("Failed to initialize AlertManager client", "error", err)
-		return nil, err
-	}
-	return amClient, nil
 }
 
 func isAlertSilenced(alert model.LabelSet, silences []models.Alert) bool {
