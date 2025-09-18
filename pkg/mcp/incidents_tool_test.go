@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -212,7 +213,8 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 					},
 				}
 				data, _ := json.Marshal(r)
-				return mcp.NewToolResultText(string(data))
+				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
+				return mcp.NewToolResultText(response)
 			}(),
 		},
 	}
