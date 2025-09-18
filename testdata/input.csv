@@ -1,0 +1,21 @@
+start,end,alertname,namespace,severity,silenced,labels
+0,4000,Watchdog,openshift-monitoring,none,true,
+0,4000,AlertmanagerReceiversNotConfigured,openshift-monitoring,warning,true,
+0,4000,ClusterNotUpgradeable,openshift-cluster-version,info,true,
+3000,4000,TargetDown,openshift-monitoring,warning,false,
+3010,4000,KubeNodeNotReady,openshift-monitoring,warning,false,"{""node"": ""ip-10-0-58-248.us-east-2.compute.internal"", ""condition"": ""Ready""}"
+3010,4000,KubeNodeUnreachable,openshift-monitoring,warning,false,"{""node"": ""ip-10-0-58-248.us-east-2.compute.internal""}"
+3005,3050,ClusterOperatorDegraded,openshift-cluster-version,warning,false,"{""name"": ""machine-config""}"
+3100,3200,ClusterOperatorDegraded,openshift-cluster-version,warning,false,"{""name"": ""machine-config""}"
+3300,3600,ClusterOperatorDegraded,openshift-cluster-version,warning,false,"{""name"": ""machine-config""}"
+3000,4000,TargetDown,openshift-machine-config-operator,warning,false,
+3000,3200,ClusterOperatorDown,openshift-cluster-version,warning,false,"{""name"": ""monitoring""}"
+3200,4000,ClusterOperatorDown,openshift-cluster-version,critical,false,"{""name"": ""monitoring""}"
+3400,4000,ClusterOperatorDown,openshift-cluster-version,info,false,"{""name"": ""monitoring""}"
+3000,4000,KubeDaemonSetRolloutStuck,openshift-monitoring,warning,false,
+3020,4000,PodDisruptionBudgetAtLimit,openshift-monitoring,warning,false,
+3020,4000,TargetDown,openshift-dns,warning,false,
+3020,4000,KubeDaemonSetMisScheduled,openshift-dns,warning,false,
+3020,4000,KubeDaemonSetMisScheduled,openshift-ingress-canary,warning,false,
+3020,4000,KubeDaemonSetMisScheduled,openshift-network-operator,warning,false,
+3020,4000,TargetDown,openshift-network-operator,warning,false,

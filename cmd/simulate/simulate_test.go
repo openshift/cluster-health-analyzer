@@ -10,9 +10,9 @@ import (
 )
 
 func TestParseIntervalsFromCSV_ValidInput(t *testing.T) {
-	input := `start,end,alertname,namespace,severity,labels
-0,60,Watchdog,openshift-monitoring,none,
-10,40,ClusterOperatorDegraded,openshift-cluster-version,warning,{"name":"machine-config"}`
+	input := `start,end,alertname,namespace,severity,silenced,labels
+0,60,Watchdog,openshift-monitoring,none,true,
+10,40,ClusterOperatorDegraded,openshift-cluster-version,warning,false,{"name":"machine-config"}`
 
 	expected := []utils.RelativeInterval{
 		{
@@ -20,6 +20,7 @@ func TestParseIntervalsFromCSV_ValidInput(t *testing.T) {
 				"alertname": "Watchdog",
 				"namespace": "openshift-monitoring",
 				"severity":  "none",
+				"silenced":  "true",
 			},
 			Start: 0,
 			End:   60,
@@ -29,6 +30,7 @@ func TestParseIntervalsFromCSV_ValidInput(t *testing.T) {
 				"alertname": "ClusterOperatorDegraded",
 				"namespace": "openshift-cluster-version",
 				"severity":  "warning",
+				"silenced":  "false",
 				"name":      "machine-config",
 			},
 			Start: 10,
@@ -44,8 +46,8 @@ func TestParseIntervalsFromCSV_ValidInput(t *testing.T) {
 }
 
 func TestParseIntervalsFromCSV_InvalidStartTime(t *testing.T) {
-	input := `start,end,alertname,namespace,severity,labels
-invalid,60,Watchdog,openshift-monitoring,warning,`
+	input := `start,end,alertname,namespace,severity,silenced,labels
+invalid,60,Watchdog,openshift-monitoring,warning,false,`
 
 	reader := strings.NewReader(input)
 	_, err := parseIntervalsFromCSV(reader)
@@ -54,8 +56,8 @@ invalid,60,Watchdog,openshift-monitoring,warning,`
 }
 
 func TestParseIntervalsFromCSV_InvalidEndTime(t *testing.T) {
-	input := `start,end,alertname,namespace,severity,labels
-0,invalid,Watchdog,openshift-monitoring,warning,`
+	input := `start,end,alertname,namespace,severity,silenced,labels
+0,invalid,Watchdog,openshift-monitoring,warning,false,`
 
 	reader := strings.NewReader(input)
 	_, err := parseIntervalsFromCSV(reader)
@@ -64,8 +66,8 @@ func TestParseIntervalsFromCSV_InvalidEndTime(t *testing.T) {
 }
 
 func TestParseIntervalsFromCSV_InvalidJSONLabels(t *testing.T) {
-	input := `start,end,alertname,namespace,severity,labels
-0,60,Watchdog,openshift-monitoring,warning,{invalid:json}`
+	input := `start,end,alertname,namespace,severity,silenced,labels
+0,60,Watchdog,openshift-monitoring,warning,false,{invalid:json}`
 
 	reader := strings.NewReader(input)
 	_, err := parseIntervalsFromCSV(reader)

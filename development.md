@@ -52,16 +52,17 @@ full list run `make help`.
 ## Data simulation
 
 For development purposes, it's useful to have some data populated in Prometheus.
+A sample csv with some data can be found in `./testdata/input.csv`.
 
 It's possible to generate sample alerts + corresponding component and incident
 mappings using the following command:
 
 ``` sh
-SCENARIO=input.csv make simulate
+SCENARIO=./testdata/input.csv make simulate
 ```
 or
 ``` sh
-go run ./main.go simulate --scenario input.csv
+go run ./main.go simulate --scenario ./testdata/input.csv
 ```
 
 The CSV file defines the alerts to be generated and has the following format:

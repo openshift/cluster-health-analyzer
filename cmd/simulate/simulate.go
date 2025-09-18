@@ -49,6 +49,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "Watchdog",
 			"namespace": "openshift-monitoring",
 			"severity":  "none",
+			"silenced":  "true",
 		},
 		Start: 0,
 		End:   4000,
@@ -58,6 +59,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "AlertmanagerReceiversNotConfigured",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
+			"silenced":  "true",
 		},
 		Start: 0,
 		End:   4000,
@@ -67,6 +69,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "ClusterNotUpgradeable",
 			"namespace": "openshift-cluster-version",
 			"severity":  "info",
+			"silenced":  "true",
 		},
 		Start: 0,
 		End:   4000,
@@ -76,6 +79,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "TargetDown",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3000,
 		End:   4000,
@@ -87,6 +91,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"severity":  "warning",
 			"node":      "ip-10-0-58-248.us-east-2.compute.internal",
 			"condition": "Ready",
+			"silenced":  "false",
 		},
 		Start: 3010,
 		End:   4000,
@@ -97,6 +102,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
 			"node":      "ip-10-0-58-248.us-east-2.compute.internal",
+			"silenced":  "false",
 		},
 		Start: 3010,
 		End:   4000,
@@ -108,6 +114,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "machine-config",
+			"silenced":  "false",
 		},
 		Start: 3005,
 		End:   3050,
@@ -118,6 +125,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "machine-config",
+			"silenced":  "false",
 		},
 		Start: 3100,
 		End:   3200,
@@ -128,6 +136,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "machine-config",
+			"silenced":  "false",
 		},
 		Start: 3300,
 		End:   3600,
@@ -137,6 +146,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "TargetDown",
 			"namespace": "openshift-machine-config-operator",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3000,
 		End:   4000,
@@ -147,6 +157,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"namespace": "openshift-cluster-version",
 			"severity":  "warning",
 			"name":      "monitoring",
+			"silenced":  "false",
 		},
 		Start: 3000,
 		End:   3200,
@@ -157,6 +168,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"namespace": "openshift-cluster-version",
 			"severity":  "critical",
 			"name":      "monitoring",
+			"silenced":  "false",
 		},
 		Start: 3200,
 		End:   4000,
@@ -166,6 +178,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "KubeDaemonSetRolloutStuck",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3000,
 		End:   4000,
@@ -175,6 +188,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "PodDisruptionBudgetAtLimit",
 			"namespace": "openshift-monitoring",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3020,
 		End:   4000,
@@ -184,6 +198,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "TargetDown",
 			"namespace": "openshift-dns",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3020,
 		End:   4000,
@@ -193,6 +208,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-dns",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3020,
 		End:   4000,
@@ -202,6 +218,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-ingress-canary",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3020,
 		End:   4000,
@@ -211,6 +228,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "KubeDaemonSetMisScheduled",
 			"namespace": "openshift-network-operator",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3020,
 		End:   4000,
@@ -220,6 +238,7 @@ var defaultRelativeIntervals = []utils.RelativeInterval{
 			"alertname": "TargetDown",
 			"namespace": "openshift-network-operator",
 			"severity":  "warning",
+			"silenced":  "false",
 		},
 		Start: 3020,
 		End:   4000,
@@ -283,8 +302,8 @@ func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 		if err != nil {
 			slog.Error("Invalid CSV format", "line", line, "error", err)
 			return nil, err
-		} else if len(fields) != 6 {
-			slog.Error("Invalid number of fields", "line", line, "expected", 6, "got", len(fields))
+		} else if len(fields) != 7 {
+			slog.Error("Invalid number of fields", "line", line, "expected", 7, "got", len(fields))
 			return nil, errors.New("CSV parsing error")
 		}
 
@@ -309,12 +328,13 @@ func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 			"alertname": model.LabelValue(fields[2]),
 			"namespace": model.LabelValue(fields[3]),
 			"severity":  model.LabelValue(fields[4]),
+			"silenced":  model.LabelValue(fields[5]),
 		}
 
 		// Parse additional labels, if present
-		if fields[5] != "" {
+		if fields[6] != "" {
 			var additionalLabels model.LabelSet
-			err := json.Unmarshal([]byte(fields[5]), &additionalLabels)
+			err := json.Unmarshal([]byte(fields[6]), &additionalLabels)
 			if err != nil {
 				slog.Error("Invalid additional labels JSON", "line", line, "error", err)
 				return nil, err
