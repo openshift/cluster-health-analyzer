@@ -16,18 +16,23 @@ data:
           selectors:
           - matchLabels:
               node-role.kubernetes.io/control-plane: []
+        - resource: machineconfigpools
+          group: machineconfiguration.openshift.io
+          selectors:
+          - matchLabels:
+              pools.operator.machineconfiguration.openshift.io/master: []
       - name: capacity
         children:
         - name: cpu
           alerts:
             selectors:
             - matchLabels:
-                alertname: ["KubeCPUOvercommit","HighOverallControlPlaneCPU"]
+                alertname: ["KubeCPUOvercommit","HighOverallControlPlaneCPU", "ExtremelyHighIndividualControlPlaneCPU"]
         - name: memory
           alerts:
             selectors:
             - matchLabels:
-                alertname: ["HighOverallControlPlaneMemory"]
+                alertname: ["HighOverallControlPlaneMemory", "ExtremelyHighIndividualControlPlaneMemory", "SystemMemoryExceedsReservation"]
       - name: operators
         children:
         - name: etcd
