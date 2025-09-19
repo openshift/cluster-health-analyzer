@@ -1,5 +1,7 @@
 package alertmanager
 
+//go:generate mockgen -package=mocks -mock_names=Loader=MockAlertManagerLoader -source=loader.go -destination=../test/mocks/mock_alertmanager_loader.go
+
 import (
 	"crypto/tls"
 	"crypto/x509"
@@ -19,8 +21,8 @@ import (
 	prom_config "github.com/prometheus/common/config"
 )
 
-// AlertLoader reads alerts from the Alertmanager API
-type AlertLoader interface {
+// Loader reads alerts from the Alertmanager API
+type Loader interface {
 	// ActiveAlert reads the active alerts from the Alertmanager
 	// and returns them as a slice.
 	ActiveAlerts() ([]models.Alert, error)
@@ -32,67 +34,87 @@ type AlertLoader interface {
 	SilencedAlerts() ([]models.Alert, error)
 }
 
-type alertLoader struct {
+type LoaderConfig struct {
+	AlertManagerURL string
+	Token           string
+}
+
+type loader struct {
 	cli *client.AlertmanagerAPI
 }
 
-// NewAlertLoader creates a new client Alermanager API
-func NewAlertLoader(alertManagerURL string) (AlertLoader, error) {
-	amURL, err := url.Parse(alertManagerURL)
+// NewLoader creates a new client Alermanager API
+func NewLoader(cfg LoaderConfig) (Loader, error) {
+	amURL, err := url.Parse(cfg.AlertManagerURL)
 	if err != nil {
 		return nil, err
 	}
-	useTls := strings.HasPrefix(alertManagerURL, "https://")
+	useTls := strings.HasPrefix(cfg.AlertManagerURL, "https://")
 
 	runtime := runtimeclient.New(amURL.Host, path.Join(amURL.Path, "/api/v2"), []string{amURL.Scheme})
 	if useTls {
-		token, err := readTokenFromFile()
+
+		token := cfg.Token
+
+		if token == "" {
+			tokenBytes, err := readTokenFromFile()
+			if err != nil {
+				return nil, err
+			}
+			token = string(tokenBytes)
+		}
+
+		amClient, err := initTlsAlertManagerClient(runtime, token)
 		if err != nil {
 			return nil, err
 		}
 
-		certs, err := createCertPool()
-		if err != nil {
-			return nil, err
-		}
-		defaultRt := api.DefaultRoundTripper.(*http.Transport)
-		defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
-
-		runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
-			"Bearer", prom_config.NewInlineSecret(string(token)), defaultRt)
-		return &alertLoader{
-			cli: client.New(runtime, strfmt.Default),
+		return &loader{
+			cli: amClient,
 		}, nil
 	}
-	return &alertLoader{cli: client.New(runtime, strfmt.Default)}, nil
+	return &loader{cli: client.New(runtime, strfmt.Default)}, nil
+}
+
+func initTlsAlertManagerClient(runtime *runtimeclient.Runtime, token string) (*client.AlertmanagerAPI, error) {
+	certs, err := createCertPool()
+	if err != nil {
+		return nil, err
+	}
+	defaultRt := api.DefaultRoundTripper.(*http.Transport)
+	defaultRt.TLSClientConfig = &tls.Config{RootCAs: certs}
+
+	runtime.Transport = prom_config.NewAuthorizationCredentialsRoundTripper(
+		"Bearer", prom_config.NewInlineSecret(token), defaultRt)
+	return client.New(runtime, strfmt.Default), nil
 }
 
 // ActiveAlert reads the active alerts from the Alertmanager
 // and returns them as a slice.
-func (a *alertLoader) ActiveAlerts() ([]models.Alert, error) {
-	return a.loadAlerts(true, false, nil)
+func (l *loader) ActiveAlerts() ([]models.Alert, error) {
+	return l.loadAlerts(true, false, nil)
 }
 
 // ActiveAlert reads the active alerts with the provided labels from the Alertmanager
 // and returns them as a slice.
-func (a *alertLoader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
-	return a.loadAlerts(true, false, labels)
+func (l *loader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
+	return l.loadAlerts(true, false, labels)
 }
 
 // SilencedAlerts reads silenced alerts from the Alertmanager
 // and returns them as a slice
-func (a *alertLoader) SilencedAlerts() ([]models.Alert, error) {
-	return a.loadAlerts(false, true, nil)
+func (l *loader) SilencedAlerts() ([]models.Alert, error) {
+	return l.loadAlerts(false, true, nil)
 }
 
 // loadAlerts queries the alertmanager with the provided parameters
-func (a *alertLoader) loadAlerts(active, silenced bool, labels []string) ([]models.Alert, error) {
+func (l *loader) loadAlerts(active, silenced bool, labels []string) ([]models.Alert, error) {
 	params := alert.NewGetAlertsParams().
 		WithActive(&active).
 		WithSilenced(&silenced).
 		WithFilter(labels)
 
-	alertsOK, err := a.cli.Alert.GetAlerts(params)
+	alertsOK, err := l.cli.Alert.GetAlerts(params)
 	if err != nil {
 		return nil, err
 	}

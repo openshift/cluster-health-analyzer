@@ -5,6 +5,7 @@ go 1.24
 require (
 	github.com/go-openapi/runtime v0.28.0
 	github.com/go-openapi/strfmt v0.23.0
+	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
 	github.com/inecas/kube-health v0.3.2-0.20250710120905-38ca01bb68de
 	github.com/mark3labs/mcp-go v0.32.0

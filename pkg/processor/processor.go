@@ -38,8 +38,8 @@ type processor struct {
 	// interval is the time interval between processing iterations.
 	interval time.Duration
 
-	loader           *prom.Loader
-	amLoader         alertmanager.AlertLoader
+	loader           prom.Loader
+	amLoader         alertmanager.Loader
 	groupsCollection *GroupsCollection
 }
 
@@ -55,7 +55,9 @@ func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.
 		return nil, err
 	}
 
-	amLoader, err := alertmanager.NewAlertLoader(cfg.AlertManagerURL)
+	amLoader, err := alertmanager.NewLoader(alertmanager.LoaderConfig{
+		AlertManagerURL: cfg.AlertManagerURL,
+	})
 	if err != nil {
 		return nil, err
 	}
