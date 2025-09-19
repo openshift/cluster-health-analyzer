@@ -337,6 +337,10 @@ func (m MockAlertLoader) SilencedAlerts() ([]models.Alert, error) {
 	return m.silenced, m.err
 }
 
+func (m MockAlertLoader) GetSilencesByLabels(labels []string) ([]models.Silence, error) {
+	return []models.Silence{}, nil
+}
+
 // ActiveAlertsWithLabels returns only the alerts matching all the provided labels
 func (m MockAlertLoader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error) {
 	var res []models.Alert
