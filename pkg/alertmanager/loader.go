@@ -16,6 +16,7 @@ import (
 	"github.com/go-openapi/strfmt"
 	"github.com/prometheus/alertmanager/api/v2/client"
 	"github.com/prometheus/alertmanager/api/v2/client/alert"
+	"github.com/prometheus/alertmanager/api/v2/client/silence"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/client_golang/api"
 	prom_config "github.com/prometheus/common/config"
@@ -32,6 +33,8 @@ type Loader interface {
 	// SilencedAlerts reads silenced alerts from the Alertmanager
 	// and returns them as a slice
 	SilencedAlerts() ([]models.Alert, error)
+	// GetSilencesByLabels return silences metadata from the alert labels
+	GetSilencesByLabels(labels []string) ([]models.Silence, error)
 }
 
 type LoaderConfig struct {
@@ -105,6 +108,23 @@ func (l *loader) ActiveAlertsWithLabels(labels []string) ([]models.Alert, error)
 // and returns them as a slice
 func (l *loader) SilencedAlerts() ([]models.Alert, error) {
 	return l.loadAlerts(false, true, nil)
+}
+
+// GetSilencesByLabels returns all the silences that matches the labels
+func (l *loader) GetSilencesByLabels(labels []string) ([]models.Silence, error) {
+	params := silence.NewGetSilencesParams().WithFilter(labels)
+	silencesOK, err := l.cli.Silence.GetSilences(params)
+	if err != nil {
+		return nil, err
+	}
+	silences := make([]models.Silence, 0, len(silencesOK.Payload))
+	for _, s := range silencesOK.Payload {
+		if *s.Status.State != models.SilenceStatusStateActive {
+			continue
+		}
+		silences = append(silences, s.Silence)
+	}
+	return silences, nil
 }
 
 // loadAlerts queries the alertmanager with the provided parameters

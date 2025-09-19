@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/go-openapi/strfmt"
 	"github.com/golang/mock/gomock"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
@@ -46,6 +48,10 @@ var (
 func TestIncidentTool_IncidentsHandler(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
+	var (
+		silencedOn = time.Now()
+	)
 
 	type args struct {
 		ctx     context.Context
@@ -164,6 +170,22 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				}
 				mocked := mocks.NewMockAlertManagerLoader(ctrl)
 				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
+				mocked.EXPECT().GetSilencesByLabels([]string{"alertname=ClusterOperatorDown", "namespace=openshift-monitoring", "severity=warning"}).Return([]models.Silence{
+					{
+						StartsAt: func(t time.Time) *strfmt.DateTime {
+							dt := strfmt.DateTime(t)
+							return &dt
+						}(silencedOn),
+					},
+				}, nil).AnyTimes()
+				mocked.EXPECT().GetSilencesByLabels([]string{"alertname=UpdateAvailable", "namespace=openshift-monitoring", "severity=info"}).Return([]models.Silence{
+					{
+						StartsAt: func(t time.Time) *strfmt.DateTime {
+							dt := strfmt.DateTime(t)
+							return &dt
+						}(silencedOn),
+					},
+				}, nil).AnyTimes()
 				return mocked
 			}(),
 			args: args{
@@ -194,18 +216,18 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 										"namespace":  "openshift-monitoring",
 										"severity":   "warning",
 										"status":     "resolved",
-										"silenced":   "false",
 										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
 										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
 									},
 									{
-										"name":       "UpdateAvailable",
-										"namespace":  "openshift-monitoring",
-										"severity":   "info",
-										"status":     "resolved",
-										"silenced":   "true",
-										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
+										"name":        "UpdateAvailable",
+										"namespace":   "openshift-monitoring",
+										"severity":    "info",
+										"status":      "resolved",
+										"start_time":  model.LabelValue(baseTime.Format(time.RFC3339)),
+										"end_time":    model.LabelValue(baseTime.Format(time.RFC3339)),
+										"silenced":    "true",
+										"silenced_on": model.LabelValue(silencedOn.Format(time.RFC3339)),
 									},
 								},
 							},
@@ -231,7 +253,19 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			}
 			got, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request)
-			assert.Equal(t, tt.expectedResult, got)
+
+			// making assertion on sorted string content because
+			// map order is not guarantee in golang and this can cause flakyness
+			// on response assertions
+			gotContent := (*got).Content[0].(mcp.TextContent).Text
+			bytes := []byte(gotContent)
+			slices.Sort(bytes)
+
+			expectedContent := (*tt.expectedResult).Content[0].(mcp.TextContent).Text
+			bytes = []byte(expectedContent)
+			slices.Sort(bytes)
+
+			assert.Equal(t, expectedContent, gotContent)
 			assert.Equal(t, tt.expectedErr, err)
 		})
 	}
@@ -472,12 +506,18 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	var (
+		fooSilencedOn = time.Now()
+		barSilencedOn = fooSilencedOn.Add(3 * time.Hour)
+	)
+
 	tests := []struct {
 		name              string
 		promLoader        prom.Loader
+		amLoader          alertmanager.Loader
 		incidentsMap      map[string]Incident
-		silencedAlerts    []models.Alert
 		expectedIncidents []Incident
+		wantErr           error
 	}{
 		{
 			name: "Same alerts in different namespace are matched correctly",
@@ -489,6 +529,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"alertname":  "Alert1",
 							"namespace":  "foo",
 							"alertstate": "firing",
+							"severity":   "critical",
 						},
 						Samples: []model.SamplePair{
 							{
@@ -506,6 +547,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"alertname":  "Alert1",
 							"namespace":  "bar",
 							"alertstate": "firing",
+							"severity":   "critical",
 						},
 						Samples: []model.SamplePair{
 							{
@@ -521,14 +563,12 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				}, nil)
 				return mocked
 			}(),
-			silencedAlerts: []models.Alert{
-				{
-					Labels: map[string]string{
-						"alertname": "Alert1",
-						"namespace": "foo",
-					},
-				},
-			},
+			amLoader: func() alertmanager.Loader {
+				silencedAlerts := []models.Alert{}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
+				return mocked
+			}(),
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
@@ -545,15 +585,15 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 						{
 							"name":       "Alert1",
 							"namespace":  "foo",
+							"severity":   "critical",
 							"status":     "firing",
-							"silenced":   "true",
 							"start_time": model.LabelValue(model.Now().Add(-25 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
 							"name":       "Alert1",
 							"namespace":  "bar",
+							"severity":   "critical",
 							"status":     "firing",
-							"silenced":   "false",
 							"start_time": model.LabelValue(model.Now().Add(-24 * time.Minute).Time().Format(time.RFC3339)),
 						},
 					},
@@ -570,6 +610,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"alertname":  "Alert1",
 							"namespace":  "foo",
 							"alertstate": "resolved",
+							"severity":   "critical",
 						},
 						Samples: []model.SamplePair{
 							{
@@ -582,6 +623,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"alertname":  "Alert1",
 							"namespace":  "bar",
 							"alertstate": "resolved",
+							"severity":   "critical",
 						},
 						Samples: []model.SamplePair{
 							{
@@ -594,6 +636,7 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"alertname":  "Alert2",
 							"namespace":  "bar",
 							"alertstate": "resolved",
+							"severity":   "critical",
 						},
 						Samples: []model.SamplePair{
 							{
@@ -604,27 +647,25 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				}, nil)
 				return mocked
 			}(),
+			amLoader: func() alertmanager.Loader {
+				silencedAlerts := []models.Alert{}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
+				return mocked
+			}(),
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
 					Alerts: []model.LabelSet{
-						{"alertname": "Alert1", "namespace": "foo"},
-						{"alertname": "Alert1", "namespace": "bar"},
+						{"alertname": "Alert1", "namespace": "foo", "severity": "critical"},
+						{"alertname": "Alert1", "namespace": "bar", "severity": "critical"},
 					},
 				},
 				"2": {
 					GroupId: "2",
 					Alerts: []model.LabelSet{
-						{"alertname": "Alert1", "namespace": "foo"},
-						{"alertname": "Alert2", "namespace": "bar"},
-					},
-				},
-			},
-			silencedAlerts: []models.Alert{
-				{
-					Labels: map[string]string{
-						"alertname": "Alert1",
-						"namespace": "foo",
+						{"alertname": "Alert1", "namespace": "foo", "severity": "critical"},
+						{"alertname": "Alert2", "namespace": "bar", "severity": "critical"},
 					},
 				},
 			},
@@ -635,16 +676,16 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 						{
 							"name":       "Alert1",
 							"namespace":  "foo",
+							"severity":   "critical",
 							"status":     "resolved",
-							"silenced":   "true",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
 							"name":       "Alert1",
 							"namespace":  "bar",
+							"severity":   "critical",
 							"status":     "resolved",
-							"silenced":   "false",
 							"start_time": model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 						},
@@ -656,16 +697,16 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 						{
 							"name":       "Alert1",
 							"namespace":  "foo",
+							"severity":   "critical",
 							"status":     "resolved",
-							"silenced":   "true",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
 							"name":       "Alert2",
 							"namespace":  "bar",
+							"severity":   "critical",
 							"status":     "resolved",
-							"silenced":   "false",
 							"start_time": model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 							"end_time":   model.LabelValue(model.Now().Add(-19 * time.Minute).Time().Format(time.RFC3339)),
 						},
@@ -761,38 +802,72 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				}, nil)
 				return mocked
 			}(),
+			amLoader: func() alertmanager.Loader {
+				silencedAlerts := []models.Alert{
+					{
+						Labels: map[string]string{
+							"alertname": "Alert1",
+							"namespace": "foo",
+							"severity":  "warning",
+							"pod":       "red",
+						},
+					},
+					{
+						Labels: map[string]string{
+							"alertname": "Alert1",
+							"namespace": "bar",
+							"severity":  "warning",
+							"pod":       "red",
+						},
+					},
+					{
+						Labels: map[string]string{
+							"alertname": "Alert1",
+							"namespace": "bar",
+							"severity":  "warning",
+							"pod":       "green",
+						},
+					},
+				}
+				mocked := mocks.NewMockAlertManagerLoader(ctrl)
+				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
+				mocked.EXPECT().GetSilencesByLabels([]string{"alertname=Alert1", "namespace=foo", "severity=warning"}).Return([]models.Silence{
+					{
+						StartsAt: func(t time.Time) *strfmt.DateTime {
+							dt := strfmt.DateTime(t)
+							return &dt
+						}(fooSilencedOn),
+					},
+				}, nil).AnyTimes()
+				mocked.EXPECT().GetSilencesByLabels([]string{"alertname=Alert1", "namespace=bar", "severity=warning"}).Return([]models.Silence{
+					{
+						StartsAt: func(t time.Time) *strfmt.DateTime {
+							dt := strfmt.DateTime(t)
+							return &dt
+						}(barSilencedOn),
+					},
+					// adding other silences because we want to check the lowest one is matching the expectation
+					{
+						StartsAt: func(t time.Time) *strfmt.DateTime {
+							dt := strfmt.DateTime(t)
+							return &dt
+						}(barSilencedOn.Add(5 * time.Minute)),
+					},
+					{
+						StartsAt: func(t time.Time) *strfmt.DateTime {
+							dt := strfmt.DateTime(t)
+							return &dt
+						}(barSilencedOn.Add(time.Hour)),
+					},
+				}, nil).AnyTimes()
+				return mocked
+			}(),
 			incidentsMap: map[string]Incident{
 				"1": {
 					GroupId: "1",
 					Alerts: []model.LabelSet{
 						{"alertname": "Alert1", "namespace": "foo", "severity": "warning"},
 						{"alertname": "Alert1", "namespace": "bar", "severity": "warning"},
-					},
-				},
-			},
-			silencedAlerts: []models.Alert{
-				{
-					Labels: map[string]string{
-						"alertname": "Alert1",
-						"namespace": "foo",
-						"severity":  "warning",
-						"pod":       "red",
-					},
-				},
-				{
-					Labels: map[string]string{
-						"alertname": "Alert1",
-						"namespace": "bar",
-						"severity":  "warning",
-						"pod":       "red",
-					},
-				},
-				{
-					Labels: map[string]string{
-						"alertname": "Alert1",
-						"namespace": "bar",
-						"severity":  "warning",
-						"pod":       "green",
 					},
 				},
 			},
@@ -804,17 +879,17 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							"name":       "Alert1",
 							"namespace":  "foo",
 							"status":     "firing",
-							"silenced":   "false",
 							"severity":   "warning",
 							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
 						},
 						{
-							"name":       "Alert1",
-							"namespace":  "bar",
-							"status":     "firing",
-							"silenced":   "true",
-							"severity":   "warning",
-							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+							"name":        "Alert1",
+							"namespace":   "bar",
+							"status":      "firing",
+							"severity":    "warning",
+							"start_time":  model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+							"silenced":    "true",
+							"silenced_on": model.LabelValue(barSilencedOn.Format(time.RFC3339)),
 						},
 					},
 				},
@@ -825,11 +900,16 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			incidents := getAlertDataForIncidents(ctx, tt.incidentsMap, tt.silencedAlerts, tt.promLoader, v1.Range{
+
+			tool := IncidentTool{}
+
+			incidents, err := tool.getAlertDataForIncidents(ctx, tt.incidentsMap, tt.promLoader, tt.amLoader, v1.Range{
 				Start: time.Now().Add(-30 * time.Minute),
 				End:   time.Now(),
 				Step:  300 * time.Second,
 			})
+
+			assert.Equal(t, tt.wantErr, err)
 
 			// Sort the actual and expected alerts slices before comparing to avoid test flakyness
 			for i := range incidents {

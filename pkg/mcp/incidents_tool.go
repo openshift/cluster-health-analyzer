@@ -8,7 +8,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -142,19 +141,17 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 		return nil, err
 	}
 
-	silences, err := amLoader.SilencedAlerts()
-	if err != nil {
-		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
-		return nil, err
-	}
-
 	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
 		return nil, err
 	}
 
-	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange)
+	incidents, err := i.getAlertDataForIncidents(ctx, incidentsMap, promLoader, amLoader, queryTimeRange)
+	if err != nil {
+		slog.Error("Failed to get alert data for incidents", "error", err)
+		return nil, err
+	}
 	r := Response{
 		Incidents: Incidents{
 			Total:     len(incidents),
@@ -280,15 +277,20 @@ func getTokenFromCtx(ctx context.Context) (string, error) {
 // getAlertDataForIncidents queries Prometheus for firing alerts from the last 15 days (to have
 // some starting time) and then maps (the alert identifier is composed by name and namespace)
 // the active alerts to the provided map of incidents. It returns slice of the incidents.
-func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, silences []models.Alert, promAPI prom.Loader, qRange v1.Range) []Incident {
+func (i *IncidentTool) getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, promAPI prom.Loader, amAPI alertmanager.Loader, qRange v1.Range) ([]Incident, error) {
 	alertData, err := promAPI.LoadVectorRange(ctx, `ALERTS{alertstate!="pending"}`, qRange.Start, qRange.End, qRange.Step)
 	if err != nil {
 		slog.Error("Failed to query firing alerts", "error", err)
-		return nil
+		return nil, err
 	}
 
-	silencedAlertsMap := make(map[string][]models.Alert, len(silences))
-	for _, silencedAlert := range silences {
+	silencedAlerts, err := amAPI.SilencedAlerts()
+	if err != nil {
+		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
+		return nil, err
+	}
+	silencedAlertsMap := make(map[string][]models.Alert, len(silencedAlerts))
+	for _, silencedAlert := range silencedAlerts {
 		if alertname, ok := silencedAlert.Labels["alertname"]; ok {
 			silencedAlertsMap[alertname] = append(silencedAlertsMap[alertname], silencedAlert)
 		}
@@ -321,6 +323,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 			for _, firingAlert := range alerts {
 				match, _ := subsetMatcher.Matches(firingAlert)
 				if match {
+					updatedAlert := cleanupLabels(firingAlert)
 
 					// the silencedAlertsMap is precomputed in order to contain all the silences grouped by alertname
 					// [Alert1] = [{alertname="Alert1", namespace="foo"}, alertname="Alert1", namespace="bar"]
@@ -332,32 +335,42 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 					silenced := false
 					if isAlertSilenced(firingAlert, silencedAlertsMap[alertname]) {
-						silenced = true
+						silences, err := amAPI.GetSilencesByLabels([]string{
+							fmt.Sprintf("alertname=%s", alertname),
+							fmt.Sprintf("namespace=%s", namespace),
+							fmt.Sprintf("severity=%s", severity),
+						})
+						if err != nil {
+							slog.Error("Failed retrieving silences from AlertManager", "error", err)
+							return nil, err
+						}
+						if len(silences) > 0 {
+							silenced = true
+							updatedAlert["silenced"] = "true"
+							updatedAlert["silenced_on"] = model.LabelValue(formatToRFC3339(getMinStartOnFromSilences(silences)))
+						} else {
+							slog.Error("Silenced alert didn't match a proper silence entity in alertmanager")
+						}
 					}
-
-					updatedAlert := cleanupLabels(firingAlert)
 
 					// If multiple alerts shares the same triple (alertname, namespace, severity) within
 					// the same incident, these should be collapsed in a unique row. (same logic applied on server command)
 					// The desired behaviour is to attach `silenced="true"` only if all colliding alerts are silenced, otherwise false.
 					if _, f := updatedAlertsMap[key]; f {
-
 						// if an alert, already labels cleaned, was already registered in the map
 						// we should verify if it was marked as silenced
-						lastSilenced, err := strconv.ParseBool(string(updatedAlertsMap[key]["silenced"]))
-						if err != nil {
-							slog.Error("failed to parse bool", "error", err)
-							return nil
-						}
+						_, lastSilenced := updatedAlertsMap[key]["silenced_on"]
 						// the && operator allow us to get the following behaviour
 						// if all are silenced the ending property will be true
 						// if even just one is not silenced the ending property will be false
-						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", lastSilenced && silenced))
-						updatedAlertsMap[key] = updatedAlert
-					} else {
-						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", silenced))
-						updatedAlertsMap[key] = updatedAlert
+						if !lastSilenced || !silenced {
+							delete(updatedAlert, "silenced")
+							// if the alert is not silenced do not show silenced_on
+							delete(updatedAlert, "silenced_on")
+						}
 					}
+
+					updatedAlertsMap[key] = updatedAlert
 				}
 			}
 		}
@@ -365,7 +378,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 		inc.Alerts = slices.Collect(maps.Values(updatedAlertsMap))
 		incidentsSlice = append(incidentsSlice, inc)
 	}
-	return incidentsSlice
+	return incidentsSlice, nil
 }
 
 // cleanupLabels removes and renames some of the
@@ -446,4 +459,21 @@ func isAlertSilenced(alert model.LabelSet, silences []models.Alert) bool {
 	}
 
 	return false
+}
+
+func getMinStartOnFromSilences(silences []models.Silence) time.Time {
+	if len(silences) == 0 {
+		// return zero value  0001-01-01 00:00:00 +0000 UTC in case of empty slice
+		return time.Time{}
+	}
+
+	minTime := time.Time(*silences[0].StartsAt)
+
+	for _, silence := range silences[1:] {
+		t := time.Time(*silence.StartsAt)
+		if t.Before(minTime) {
+			minTime = t
+		}
+	}
+	return minTime
 }
