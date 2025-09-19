@@ -64,6 +64,21 @@ func (mr *MockAlertManagerLoaderMockRecorder) ActiveAlertsWithLabels(labels inte
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveAlertsWithLabels", reflect.TypeOf((*MockAlertManagerLoader)(nil).ActiveAlertsWithLabels), labels)
 }
 
+// GetSilencesByLabels mocks base method.
+func (m *MockAlertManagerLoader) GetSilencesByLabels(labels []string) ([]models.Silence, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSilencesByLabels", labels)
+	ret0, _ := ret[0].([]models.Silence)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSilencesByLabels indicates an expected call of GetSilencesByLabels.
+func (mr *MockAlertManagerLoaderMockRecorder) GetSilencesByLabels(labels interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSilencesByLabels", reflect.TypeOf((*MockAlertManagerLoader)(nil).GetSilencesByLabels), labels)
+}
+
 // SilencedAlerts mocks base method.
 func (m *MockAlertManagerLoader) SilencedAlerts() ([]models.Alert, error) {
 	m.ctrl.T.Helper()
