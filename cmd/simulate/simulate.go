@@ -436,12 +436,12 @@ func simulate(outputFile, scenarioFile string) {
 		must(err)
 	}
 
-	// Output cluster_health_components
-	fprintln(w, "# HELP cluster_health_components Cluster health components ranking")
-	fprintln(w, "# TYPE cluster_health_components gauge")
+	// Output cluster:health:components
+	fprintln(w, "# HELP cluster:health:components Cluster health components ranking")
+	fprintln(w, "# TYPE cluster:health:components gauge")
 	ranks := processor.BuildComponentRanks()
 	for _, rank := range ranks {
-		err := fmtInterval(w, "cluster_health_components", model.LabelSet{
+		err := fmtInterval(w, "cluster:health:components", model.LabelSet{
 			"layer":     model.LabelValue(rank.Layer),
 			"component": model.LabelValue(rank.Component),
 		}, start, end, step, float64(rank.Rank))
@@ -456,9 +456,9 @@ func simulate(outputFile, scenarioFile string) {
 		groupedIntervalsSet = append(groupedIntervalsSet, groupedIntervals...)
 	}
 
-	// Output cluster_health_components:map
-	fprintln(w, "# HELP cluster_health_components_map Cluster health components mapping")
-	fprintln(w, "# TYPE cluster_health_components_map gauge")
+	// Output cluster;health;components:map
+	fprintln(w, "# HELP cluster:health:components:map Cluster health components mapping")
+	fprintln(w, "# TYPE cluster:health:components:map gauge")
 
 	for _, gi := range groupedIntervalsSet {
 		alert := gi.Metric
@@ -466,7 +466,7 @@ func simulate(outputFile, scenarioFile string) {
 
 		// Map alert to component
 		healthMap := processor.MapAlerts([]model.LabelSet{alert})[0]
-		err := fmtInterval(w, "cluster_health_components_map", healthMap.Labels(), gi.Start, gi.End, step, float64(healthMap.Health))
+		err := fmtInterval(w, "cluster:health:components:map", healthMap.Labels(), gi.Start, gi.End, step, float64(healthMap.Health))
 		must(err)
 	}
 	_, err = fmt.Fprint(w, "# EOF")

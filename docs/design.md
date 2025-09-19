@@ -49,13 +49,13 @@ C4Container
 
 The results of the analyzer are provided through a set of metrics:
 
-## cluster_health_components
+## cluster:health:components
 
 Provides basic information about the components.
 
 ```
-cluster_health_components{component="authentication", layer="core"} 50
-cluster_health_components{component="cert-manager", layer="core"}   55
+cluster:health:components{component="authentication", layer="core"} 50
+cluster:health:components{component="cert-manager", layer="core"}   55
 ```
 
 The main purposes are:
@@ -73,7 +73,7 @@ components the analyzer is aware of, even thise that are not relevant for the cl
 The anatomy:
 
 ```
-cluster_health_components{
+cluster:health:components{
     // The layer the component belongs to. See the section below.
     layer="core",
 
@@ -103,7 +103,7 @@ to the workloads directly, but also layered components installed via OLM.
 They differ from the `core` operators in that they are not required to keep 
 the cluster functioning, but rather extend it to provide additional functionality.
 
-## cluster_health_components_map
+## cluster:health:components:map
 
 Provides mapping between:
 - source signal, e.g. alerts
@@ -113,7 +113,7 @@ Provides mapping between:
 
 The anatomy:
 ```
-cluster_health_components_map{
+cluster:health:components:map{
    // Type of the source signal (currently only `alert`,
    // in the future it could be `cluster-operator-condition` etc.)
    type="alert",

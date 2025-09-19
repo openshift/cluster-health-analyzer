@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	ClusterHealthComponentsMap = "cluster_health_components_map"
+	ClusterHealthComponentsMap = "cluster:health:components:map"
 
 	AlertNameLabelKey = "alertname"
 )

@@ -35,7 +35,7 @@ var (
 		"Cluster health components mapping.",
 	)
 	componentsMetrics = prom.NewMetricSet(
-		"cluster_health_components",
+		"cluster:health:components",
 		"Cluster components and their ranking.",
 	)
 	groupSeverityCountMetrics = prom.NewMetricSet(
