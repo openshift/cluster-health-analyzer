@@ -337,12 +337,21 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 					updatedAlert := cleanupLabels(firingAlert)
 
+					// If multiple alerts shares the same triple (alertname, namespace, severity) within
+					// the same incident, these should be collapsed in a unique row. (same logic applied on server command)
+					// The desired behaviour is to attach `silenced="true"` only if all colliding alerts are silenced, otherwise false.
 					if _, f := updatedAlertsMap[key]; f {
+
+						// if an alert, already labels cleaned, was already registered in the map
+						// we should verify if it was marked as silenced
 						lastSilenced, err := strconv.ParseBool(string(updatedAlertsMap[key]["silenced"]))
 						if err != nil {
 							slog.Error("failed to parse bool", "error", err)
 							return nil
 						}
+						// the && operator allow us to get the following behaviour
+						// if all are silenced the ending property will be true
+						// if even just one is not silenced the ending property will be false
 						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", lastSilenced && silenced))
 						updatedAlertsMap[key] = updatedAlert
 					} else {

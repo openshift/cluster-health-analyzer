@@ -739,6 +739,25 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 							},
 						},
 					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "bar",
+							"pod":        "green",
+							"alertstate": "firing",
+							"severity":   "warning",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
 				}, nil)
 				return mocked
 			}(),
@@ -766,6 +785,14 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 						"namespace": "bar",
 						"severity":  "warning",
 						"pod":       "red",
+					},
+				},
+				{
+					Labels: map[string]string{
+						"alertname": "Alert1",
+						"namespace": "bar",
+						"severity":  "warning",
+						"pod":       "green",
 					},
 				},
 			},

@@ -61,7 +61,7 @@ run:
 run-mcp:
 	go run ./main.go mcp
 
-## mocks> run go generate
+## generate> run go generate
 .PHONY: generate
 generate:
 	go generate ./...
