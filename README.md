@@ -45,6 +45,9 @@ cluster_health_components_map
   layer="compute",
   component="compute",
 
+  # wether the alert is silenced or not
+  silenced="false",
+
   # Incident group id
   group_id="b8d9df3f-8245-4f5a-825d-15578a6c8397",
 
