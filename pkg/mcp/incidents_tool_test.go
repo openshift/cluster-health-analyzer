@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
+	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -26,17 +28,17 @@ var (
 		Description: `List the current firing incidents in the cluster. 
 		One incident is a group of related alerts that are likely triggered by the same root cause.
 		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
-		Annotations: mcp.ToolAnnotation{
+		Annotations: &mcp.ToolAnnotations{
 			Title: "Provides information about Incidents in the cluster",
 		},
-		InputSchema: mcp.ToolInputSchema{
+		InputSchema: &jsonschema.Schema{
 			Type: "object",
-			Properties: map[string]any{
-				"max_age_hours": map[string]any{
-					"type":        "number",
-					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
-					"minimum":     1,
-					"maximum":     360,
+			Properties: map[string]*jsonschema.Schema{
+				"max_age_hours": {
+					Type:        "number",
+					Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					Minimum:     utils.Ptr(float64(1)),
+					Maximum:     utils.Ptr(float64(360)),
 				},
 			},
 		},
@@ -49,7 +51,8 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 
 	type args struct {
 		ctx     context.Context
-		request mcp.CallToolRequest
+		request *mcp.CallToolRequest
+		params  GetIncidentsParams
 	}
 
 	tests := []struct {
@@ -167,13 +170,10 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				return mocked
 			}(),
 			args: args{
-				ctx: context.WithValue(context.Background(), authHeaderStr, "test"),
-				request: mcp.CallToolRequest{
-					Params: mcp.CallToolParams{
-						Arguments: map[string]any{
-							"max_age_hours": "300",
-						},
-					},
+				ctx:     context.WithValue(context.Background(), authHeaderStr, "test"),
+				request: &mcp.CallToolRequest{},
+				params: GetIncidentsParams{
+					MaxAgeHours: uint(300),
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
@@ -214,7 +214,11 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				}
 				data, _ := json.Marshal(r)
 				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
-				return mcp.NewToolResultText(response)
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{Text: response},
+					},
+				}
 			}(),
 		},
 	}
@@ -230,7 +234,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 					return tt.amLoader, nil
 				},
 			}
-			got, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request)
+			got, _, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request, tt.args.params)
 			assert.Equal(t, tt.expectedResult, got)
 			assert.Equal(t, tt.expectedErr, err)
 		})

@@ -11,7 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
@@ -55,24 +56,28 @@ type incidentToolCfg struct {
 	consoleURL      string
 }
 
+type GetIncidentsParams struct {
+	MaxAgeHours uint `json:"max_age_hours"`
+}
+
 var (
 	defaultMcpGetIncidentsTool = mcp.Tool{
 		Name: "get_incidents",
 		Description: `List the current firing incidents in the cluster. 
 		One incident is a group of related alerts that are likely triggered by the same root cause.
 		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
-		Annotations: mcp.ToolAnnotation{
+		Annotations: &mcp.ToolAnnotations{
 			Title:        "Provides information about Incidents in the cluster",
-			ReadOnlyHint: utils.Ptr(true),
+			ReadOnlyHint: true,
 		},
-		InputSchema: mcp.ToolInputSchema{
+		InputSchema: &jsonschema.Schema{
 			Type: "object",
-			Properties: map[string]interface{}{
-				"max_age_hours": map[string]interface{}{
-					"type":        "number",
-					"description": "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
-					"minimum":     1,
-					"maximum":     360,
+			Properties: map[string]*jsonschema.Schema{
+				"max_age_hours": {
+					Type:        "number",
+					Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					Minimum:     utils.Ptr(float64(1)),
+					Maximum:     utils.Ptr(float64(360)),
 				},
 			},
 		},
@@ -102,31 +107,29 @@ func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
 
 // IncidentsHandler is the main handler for the Incidents. It connects to the
 // in-cluster Prometheus and queries the Incidents metrics.
-func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	slog.Info("Incidents tool received request with ", "params", request.Params, "and arguments ", request.Params.Arguments)
+func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallToolRequest, params GetIncidentsParams) (*mcp.CallToolResult, any, error) {
+	slog.Info("Incidents tool received request with ", "params", params)
 	token, err := getTokenFromCtx(ctx)
 	if err != nil {
 		slog.Error(err.Error())
-		return nil, err
+		return nil, nil, err
 	}
 
 	amLoader, err := i.getAlertManagerLoaderFn(i.cfg.alertManagerURL, token)
 	if err != nil {
 		slog.Error("Failed to initialize AlertManager client", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	promLoader, err := i.getPrometheusLoaderFn(i.cfg.promURL, token)
 	if err != nil {
 		slog.Error("Failed to initialize Prometheus client", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	maxAgeHours := 360 // 15 days default
-	if request.Params.Arguments != nil {
-		if ageHours, ok := request.GetArguments()["max_age_hours"].(float64); ok {
-			maxAgeHours = int(ageHours)
-		}
+	if params.MaxAgeHours > 0 {
+		maxAgeHours = int(params.MaxAgeHours)
 	}
 
 	timeNow := time.Now()
@@ -139,19 +142,19 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 	val, err := promLoader.LoadVectorRange(ctx, processor.ClusterHealthComponentsMap, queryTimeRange.Start, queryTimeRange.End, queryTimeRange.Step)
 	if err != nil {
 		slog.Error("Received error response from Prometheus", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	silences, err := amLoader.SilencedAlerts()
 	if err != nil {
 		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange)
@@ -165,11 +168,15 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request mcp.CallToo
 	data, err := json.Marshal(r)
 	if err != nil {
 		slog.Error("Failed to marshal the Incident data", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
-	return mcp.NewToolResultText(response), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: response},
+		},
+	}, nil, nil
 }
 
 // formatToRFC3339 formats a time to RFC3339 string, returns empty string for zero time

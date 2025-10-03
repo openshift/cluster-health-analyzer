@@ -2,12 +2,12 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type authHeader string
@@ -18,34 +18,66 @@ const authHeaderStr authHeader = "kubernetes-authorization"
 // providing basic methods to run the underlying SSE server
 // and to register tools
 type MCPHealthServer struct {
-	mcpServer  *server.MCPServer
-	httpServer *server.StreamableHTTPServer
-	addr       string
+	server *mcp.Server
+	addr   string
 }
 
-// NewMCPSSEServer
-func NewMCPSSEServer(name, version, url string) *MCPHealthServer {
-	mcpServer := server.NewMCPServer(name, version, server.WithToolCapabilities(true))
-	streamableServer := server.NewStreamableHTTPServer(mcpServer,
-		server.WithHTTPContextFunc(authFromRequest))
+type MCPHealthServerCfg struct {
+	Name    string
+	Version string
+	Url     string
+
+	PrometheusURL   string
+	AlertManagerURL string
+}
+
+// NewMCPHealthServer returns an instance of the MCPHealthServer
+func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
+	impl := mcp.Implementation{
+		Name:    cfg.Name,
+		Version: cfg.Version,
+	}
+
+	server := mcp.NewServer(&impl, &mcp.ServerOptions{HasTools: true})
+
+	incTool := NewIncidentsTool(cfg.PrometheusURL, cfg.AlertManagerURL)
+	// get_incidents
+	mcp.AddTool(server, &incTool.Tool, mcp.ToolHandlerFor[GetIncidentsParams, any](incTool.IncidentsHandler))
 
 	return &MCPHealthServer{
-		mcpServer:  mcpServer,
-		httpServer: streamableServer,
-		addr:       url,
+		server: server,
+		addr:   cfg.Url,
 	}
 }
 
-// Start
-func (m *MCPHealthServer) Start() error {
+// Start runs the MCPHealthServer
+func (m *MCPHealthServer) Start(ctx context.Context) error {
+	if m.addr == "" {
+		return errors.New("empty http address")
+	}
+	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return m.server
+	}, nil)
+
 	slog.Info("Starting MCP server on ", "address", m.addr)
-	return m.httpServer.Start(m.addr)
+
+	// the following middleware is needed to enrich the context that will be
+	// forwarded until the mcp server with the kubernetes-authorization token
+	mdw := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authCtx := authFromRequest(r.Context(), r)
+			r = r.WithContext(authCtx)
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	handlerWithAuthCtx := mdw(handler)
+	return http.ListenAndServe(m.addr, handlerWithAuthCtx)
 }
 
-// RegisterTool
-func (m *MCPHealthServer) RegisterTool(t mcp.Tool, handler server.ToolHandlerFunc) {
-	m.mcpServer.AddTool(t, handler)
-	slog.Info("Registered tool ", "name", t.Name)
+// RegisterTool registers a new tool on the MCPHealthServer
+func (m *MCPHealthServer) RegisterTool(t *mcp.Tool, handler mcp.ToolHandlerFor[any, any]) {
+	mcp.AddTool(m.server, t, handler)
 }
 
 func authFromRequest(ctx context.Context, r *http.Request) context.Context {
