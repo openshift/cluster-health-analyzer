@@ -72,6 +72,7 @@ generate:
 simulate:
 	go run ./main.go simulate $(if $(SCENARIO),--scenario $(SCENARIO))
 
+## build> build the app
 .PHONY: build
 build:
 	go build -o bin/cluster-health-analyzer . 
