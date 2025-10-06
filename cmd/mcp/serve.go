@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"log/slog"
 	"os"
 
@@ -52,7 +51,7 @@ var (
 
 			server := mcp.NewMCPHealthServer(serverCfg)
 
-			err := server.Start(context.Background())
+			err := server.Start()
 			if err != nil {
 				slog.Error("Failed to start the MCP server", "error", err)
 				return

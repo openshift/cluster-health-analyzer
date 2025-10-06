@@ -51,7 +51,7 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
 }
 
 // Start runs the MCPHealthServer
-func (m *MCPHealthServer) Start(ctx context.Context) error {
+func (m *MCPHealthServer) Start() error {
 	if m.addr == "" {
 		return errors.New("empty http address")
 	}
