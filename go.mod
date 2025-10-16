@@ -2,6 +2,8 @@ module github.com/openshift/cluster-health-analyzer
 
 go 1.24
 
+toolchain go1.24.4
+
 require (
 	github.com/go-openapi/runtime v0.28.0
 	github.com/go-openapi/strfmt v0.23.0
