@@ -223,6 +223,9 @@ func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qR
 		groupId := string(v.Metric["group_id"])
 		component := string(v.Metric["component"])
 
+		clusterName := v.Metric["cluster"]
+		clusterID := v.Metric["clusterID"]
+
 		if existingInc, ok := incidents[groupId]; ok {
 			existingInc.ComponentsSet[component] = struct{}{}
 			existingInc.AffectedComponents = slices.Collect(maps.Keys(existingInc.ComponentsSet))
@@ -250,6 +253,8 @@ func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qR
 			incidents[existingInc.GroupId] = existingInc
 		} else {
 			incident := Incident{
+				Cluster:   string(clusterName),
+				ClusterID: string(clusterID),
 				GroupId:   string(groupId),
 				Severity:  healthyVal.String(),
 				StartTime: formatToRFC3339(startTime),
@@ -326,6 +331,14 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 		for _, alertInIncident := range inc.Alerts {
 			subsetMatcher := common.LabelsSubsetMatcher{Labels: alertInIncident}
 			for _, firingAlert := range alerts {
+				// check for multicluster/ACM environment
+				if inc.ClusterID != "" {
+					clusterIDMatch := string(firingAlert["clusterID"]) == inc.ClusterID
+					// if the alert cluster ID does not match incident cluster ID, skip
+					if !clusterIDMatch {
+						continue
+					}
+				}
 				match, _ := subsetMatcher.Matches(firingAlert)
 				if match {
 
@@ -381,11 +394,15 @@ func cleanupLabels(m model.LabelSet) model.LabelSet {
 	updatedLS := m.Clone()
 	updatedLS["status"] = updatedLS["alertstate"]
 	updatedLS["name"] = updatedLS["alertname"]
+	if clusterID := updatedLS["clusterID"]; clusterID != "" {
+		updatedLS["cluster_id"] = clusterID
+	}
 	delete(updatedLS, "__name__")
 	delete(updatedLS, "prometheus")
 	delete(updatedLS, "alertstate")
 	delete(updatedLS, "alertname")
 	delete(updatedLS, "pod")
+	delete(updatedLS, "clusterID")
 	return updatedLS
 }
 

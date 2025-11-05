@@ -824,6 +824,164 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Alerts are correctly matched in multicluster environment",
+			promLoader: func() prom.Loader {
+				mocked := mocks.NewMockPrometheusLoader(ctrl)
+				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "foo",
+							"pod":        "red",
+							"alertstate": "firing",
+							"severity":   "warning",
+							"clusterID":  "1111",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "foo",
+							"pod":        "red",
+							"alertstate": "firing",
+							"severity":   "warning",
+							"clusterID":  "2222",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "bar",
+							"pod":        "blue",
+							"alertstate": "firing",
+							"severity":   "critical",
+							"clusterID":  "1111",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+					{
+						Metric: model.LabelSet{
+							"alertname":  "Alert1",
+							"namespace":  "bar",
+							"pod":        "blue",
+							"alertstate": "firing",
+							"severity":   "critical",
+							"clusterID":  "2222",
+						},
+						Samples: []model.SamplePair{
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-20 * time.Minute),
+							},
+							{
+								Value:     1,
+								Timestamp: model.Now().Add(-1 * time.Minute),
+							},
+						},
+					},
+				}, nil)
+				return mocked
+			}(),
+			incidentsMap: map[string]Incident{
+				"1": {
+					GroupId:   "1",
+					ClusterID: "1111",
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert1", "namespace": "foo", "severity": "warning"},
+						{"alertname": "Alert1", "namespace": "bar", "severity": "critical"},
+					},
+				},
+				"2": {
+					GroupId:   "2",
+					ClusterID: "2222",
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert1", "namespace": "foo", "severity": "warning"},
+						{"alertname": "Alert1", "namespace": "bar", "severity": "critical"},
+					},
+				},
+			},
+			silencedAlerts: []models.Alert{},
+			expectedIncidents: []Incident{
+				{
+					GroupId:   "1",
+					ClusterID: "1111",
+					Alerts: []model.LabelSet{
+						{
+							"name":       "Alert1",
+							"namespace":  "foo",
+							"status":     "firing",
+							"silenced":   "false",
+							"severity":   "warning",
+							"cluster_id": "1111",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+						},
+						{
+							"name":       "Alert1",
+							"namespace":  "bar",
+							"status":     "firing",
+							"silenced":   "false",
+							"severity":   "critical",
+							"cluster_id": "1111",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+						},
+					},
+				},
+				{
+					GroupId:   "2",
+					ClusterID: "2222",
+					Alerts: []model.LabelSet{
+						{
+							"name":       "Alert1",
+							"namespace":  "foo",
+							"status":     "firing",
+							"silenced":   "false",
+							"severity":   "warning",
+							"cluster_id": "2222",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+						},
+						{
+							"name":       "Alert1",
+							"namespace":  "bar",
+							"status":     "firing",
+							"silenced":   "false",
+							"severity":   "critical",
+							"cluster_id": "2222",
+							"start_time": model.LabelValue(model.Now().Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
