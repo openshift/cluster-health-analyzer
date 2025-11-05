@@ -222,9 +222,8 @@ func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qR
 		healthyVal := processor.HealthValue(lastSample.Value)
 		groupId := string(v.Metric["group_id"])
 		component := string(v.Metric["component"])
-
-		clusterName := v.Metric["cluster"]
-		clusterID := v.Metric["clusterID"]
+		clusterName := string(v.Metric["cluster"])
+		clusterID := string(v.Metric["clusterID"])
 
 		if existingInc, ok := incidents[groupId]; ok {
 			existingInc.ComponentsSet[component] = struct{}{}
@@ -253,9 +252,9 @@ func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qR
 			incidents[existingInc.GroupId] = existingInc
 		} else {
 			incident := Incident{
-				Cluster:   string(clusterName),
-				ClusterID: string(clusterID),
-				GroupId:   string(groupId),
+				Cluster:   clusterName,
+				ClusterID: clusterID,
+				GroupId:   groupId,
 				Severity:  healthyVal.String(),
 				StartTime: formatToRFC3339(startTime),
 				EndTime:   formatToRFC3339(endTime),
