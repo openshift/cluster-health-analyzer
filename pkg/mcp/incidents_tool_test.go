@@ -98,7 +98,6 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						},
 					},
 				}, nil)
-
 				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
 					{
 						Metric: model.LabelSet{
@@ -145,6 +144,11 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						},
 					},
 				}, nil)
+
+				mocked.EXPECT().LoadQuery(gomock.Any(), `console_url`, gomock.Any()).Return(
+					[]model.LabelSet{
+						{model.LabelName("url"): model.LabelValue("test.url")},
+					}, nil)
 				return mocked
 			}(),
 			amLoader: func() alertmanager.Loader {
@@ -170,7 +174,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				return mocked
 			}(),
 			args: args{
-				ctx:     context.WithValue(context.Background(), authHeaderStr, "test"),
+				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
 				request: &mcp.CallToolRequest{},
 				params: GetIncidentsParams{
 					MaxAgeHours: uint(300),
@@ -188,6 +192,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 								Status:             "firing",
 								StartTime:          baseTime.Add(19 * time.Minute).Format(time.RFC3339),
 								AffectedComponents: []string{""},
+								URL:                "test.url/monitoring/incidents?groupId=123",
 								Alerts: []model.LabelSet{
 									{
 										"name":       "ClusterOperatorDown",
@@ -465,7 +470,7 @@ func TestTransformPromValueToIncident(t *testing.T) {
 				Start: time.Now().Add(-30 * time.Minute),
 				End:   time.Now(),
 				Step:  300 * time.Second,
-			})
+			}, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedIncidents, incidents)
 		})
@@ -1003,6 +1008,77 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			}
 
 			assert.ElementsMatch(t, tt.expectedIncidents, incidents)
+		})
+	}
+}
+
+func TestGetConsoleURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	tests := []struct {
+		name           string
+		promLoader     prom.Loader
+		expectedResult map[string]string
+		expectedErr    error
+	}{
+		{
+			name: "console url not found in metrics",
+			promLoader: func() prom.Loader {
+				mockPromLoader := mocks.NewMockPrometheusLoader(ctrl)
+				mockPromLoader.EXPECT().LoadQuery(t.Context(), "console_url", gomock.Any()).Return(
+					[]model.LabelSet{}, nil)
+				return mockPromLoader
+			}(),
+			expectedErr:    fmt.Errorf("console_url not found"),
+			expectedResult: nil,
+		},
+		{
+			name: "console url metric has clusterID label",
+			promLoader: func() prom.Loader {
+				mockPromLoader := mocks.NewMockPrometheusLoader(ctrl)
+				mockPromLoader.EXPECT().LoadQuery(t.Context(), "console_url", gomock.Any()).Return(
+					[]model.LabelSet{
+						{
+							model.LabelName("url"):        model.LabelValue("test-a.url"),
+							model.LabelName(clusterIDStr): model.LabelValue("A"),
+						},
+						{
+							model.LabelName("url"):        model.LabelValue("test-b.url"),
+							model.LabelName(clusterIDStr): model.LabelValue("B"),
+						},
+					}, nil)
+				return mockPromLoader
+			}(),
+			expectedResult: map[string]string{
+				"A": "test-a.url",
+				"B": "test-b.url",
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "console url metric has no clusterID label",
+			promLoader: func() prom.Loader {
+				mockPromLoader := mocks.NewMockPrometheusLoader(ctrl)
+				mockPromLoader.EXPECT().LoadQuery(t.Context(), "console_url", gomock.Any()).Return(
+					[]model.LabelSet{
+						{
+							model.LabelName("url"): model.LabelValue("test.url"),
+						},
+					}, nil)
+				return mockPromLoader
+			}(),
+			expectedResult: map[string]string{
+				defaultStr: "test.url",
+			},
+			expectedErr: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := getConsoleURL(t.Context(), tt.promLoader)
+			assert.Equal(t, tt.expectedErr, err)
+			assert.Equal(t, tt.expectedResult, r)
 		})
 	}
 }

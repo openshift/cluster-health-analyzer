@@ -207,7 +207,7 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 }
 
 func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
-	alerts, err := p.loader.LoadAlerts(ctx, t)
+	alerts, err := p.loader.LoadQuery(ctx, `ALERTS{alertstate="firing"}`, t)
 	if err != nil {
 		return nil, err
 	}

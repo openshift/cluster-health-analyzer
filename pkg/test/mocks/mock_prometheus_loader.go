@@ -37,21 +37,6 @@ func (m *MockPrometheusLoader) EXPECT() *MockPrometheusLoaderMockRecorder {
 	return m.recorder
 }
 
-// LoadAlerts mocks base method.
-func (m *MockPrometheusLoader) LoadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LoadAlerts", ctx, t)
-	ret0, _ := ret[0].([]model.LabelSet)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// LoadAlerts indicates an expected call of LoadAlerts.
-func (mr *MockPrometheusLoaderMockRecorder) LoadAlerts(ctx, t interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadAlerts", reflect.TypeOf((*MockPrometheusLoader)(nil).LoadAlerts), ctx, t)
-}
-
 // LoadAlertsRange mocks base method.
 func (m *MockPrometheusLoader) LoadAlertsRange(ctx context.Context, start, end time.Time, step time.Duration) (prom.RangeVector, error) {
 	m.ctrl.T.Helper()
@@ -65,6 +50,21 @@ func (m *MockPrometheusLoader) LoadAlertsRange(ctx context.Context, start, end t
 func (mr *MockPrometheusLoaderMockRecorder) LoadAlertsRange(ctx, start, end, step interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadAlertsRange", reflect.TypeOf((*MockPrometheusLoader)(nil).LoadAlertsRange), ctx, start, end, step)
+}
+
+// LoadQuery mocks base method.
+func (m *MockPrometheusLoader) LoadQuery(ctx context.Context, query string, t time.Time) ([]model.LabelSet, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoadQuery", ctx, query, t)
+	ret0, _ := ret[0].([]model.LabelSet)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoadQuery indicates an expected call of LoadQuery.
+func (mr *MockPrometheusLoaderMockRecorder) LoadQuery(ctx, query, t interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadQuery", reflect.TypeOf((*MockPrometheusLoader)(nil).LoadQuery), ctx, query, t)
 }
 
 // LoadVectorRange mocks base method.

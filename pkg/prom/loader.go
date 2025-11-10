@@ -15,7 +15,7 @@ type loader struct {
 }
 
 type Loader interface {
-	LoadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error)
+	LoadQuery(ctx context.Context, query string, t time.Time) ([]model.LabelSet, error)
 	LoadAlertsRange(ctx context.Context, start, end time.Time, step time.Duration) (RangeVector, error)
 	LoadVectorRange(ctx context.Context, query string, start, end time.Time, step time.Duration) (RangeVector, error)
 }
@@ -40,22 +40,12 @@ func NewLoaderWithToken(prometheusURL, token string) (Loader, error) {
 	}, nil
 }
 
-func (c *loader) LoadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
-	result, _, err := c.api.Query(ctx, `ALERTS{alertstate="firing"}`, t)
+func (c *loader) LoadQuery(ctx context.Context, query string, t time.Time) ([]model.LabelSet, error) {
+	result, _, err := c.api.Query(ctx, query, t)
 	if err != nil {
 		return nil, err
 	}
-	vect := result.(model.Vector)
-	var ret = make([]model.LabelSet, len(vect))
-	for i, sample := range vect {
-		alert := make(model.LabelSet, len(sample.Metric))
-		for k, v := range sample.Metric {
-			alert[k] = v
-		}
-		ret[i] = alert
-	}
-	return ret, nil
-
+	return modelValueToLabelSet(result), nil
 }
 
 func (c *loader) LoadAlertsRange(ctx context.Context, start, end time.Time, step time.Duration) (RangeVector, error) {
@@ -67,20 +57,7 @@ func (c *loader) LoadAlertsRange(ctx context.Context, start, end time.Time, step
 	if err != nil {
 		return nil, err
 	}
-	matrix := result.(model.Matrix)
-	ret := make(RangeVector, len(matrix))
-	for i, samples := range matrix {
-		alert := make(model.LabelSet, len(samples.Metric))
-		for k, v := range samples.Metric {
-			alert[k] = v
-		}
-		ret[i] = Range{
-			Metric:  alert,
-			Samples: samples.Values,
-			Step:    step,
-		}
-	}
-	return ret, nil
+	return modelValueToRangeVector(result, step), nil
 }
 
 func (c *loader) LoadVectorRange(ctx context.Context, query string, start, end time.Time, step time.Duration) (RangeVector, error) {
@@ -92,18 +69,36 @@ func (c *loader) LoadVectorRange(ctx context.Context, query string, start, end t
 	if err != nil {
 		return nil, err
 	}
-	matrix := result.(model.Matrix)
+
+	return modelValueToRangeVector(result, step), nil
+}
+
+func modelValueToRangeVector(mv model.Value, step time.Duration) RangeVector {
+	matrix := mv.(model.Matrix)
 	ret := make(RangeVector, len(matrix))
 	for i, samples := range matrix {
-		labels := make(model.LabelSet, len(samples.Metric))
+		m := make(model.LabelSet, len(samples.Metric))
 		for k, v := range samples.Metric {
-			labels[k] = v
+			m[k] = v
 		}
 		ret[i] = Range{
-			Metric:  labels,
+			Metric:  m,
 			Samples: samples.Values,
 			Step:    step,
 		}
 	}
-	return ret, nil
+	return ret
+}
+
+func modelValueToLabelSet(mv model.Value) []model.LabelSet {
+	vect := mv.(model.Vector)
+	var ret = make([]model.LabelSet, len(vect))
+	for i, sample := range vect {
+		m := make(model.LabelSet, len(sample.Metric))
+		for k, v := range sample.Metric {
+			m[k] = v
+		}
+		ret[i] = m
+	}
+	return ret
 }
