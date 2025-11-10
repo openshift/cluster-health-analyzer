@@ -22,6 +22,8 @@ type Incident struct {
 	StartTime string `json:"start_time"`
 	Status    string `json:"status"`
 	EndTime   string `json:"end_time"`
+	Cluster   string `json:"cluster,omitempty"`
+	ClusterID string `json:"cluster_id,omitempty"`
 
 	URL                string              `json:"url_details"`
 	Alerts             []model.LabelSet    `json:"alerts"`
