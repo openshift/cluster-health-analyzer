@@ -21,11 +21,6 @@ import (
 	"github.com/prometheus/alertmanager/api/v2/models"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
 )
 
 var (
@@ -42,6 +37,12 @@ var (
 </INSTRUCTIONS>`
 )
 
+const (
+	clusterIDStr = "clusterID"
+	defaultStr   = "default"
+	silencedStr  = "silenced"
+)
+
 type IncidentTool struct {
 	Tool mcp.Tool
 	cfg  incidentToolCfg
@@ -53,7 +54,6 @@ type IncidentTool struct {
 type incidentToolCfg struct {
 	promURL         string
 	alertManagerURL string
-	consoleURL      string
 }
 
 type GetIncidentsParams struct {
@@ -86,19 +86,11 @@ var (
 
 // NewIncidentsTool creates a new MCP tool for the incidents
 func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
-	var err error
-
-	consoleURL, err := getConsoleURL()
-	if err != nil {
-		slog.Error("Failed to obtain cluster console URL", "error", err)
-	}
-
 	return IncidentTool{
 		Tool: defaultMcpGetIncidentsTool,
 		cfg: incidentToolCfg{
 			promURL:         promURL,
 			alertManagerURL: alertmanagerURL,
-			consoleURL:      consoleURL,
 		},
 		getPrometheusLoaderFn:   defaultPrometheusLoader,
 		getAlertManagerLoaderFn: defaultAlertManagerLoader,
@@ -150,8 +142,11 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 		slog.Error("Failed retrieving silenced alerts from AlertManager", "error", err)
 		return nil, nil, err
 	}
-
-	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange)
+	clusterIDconsoleURL, err := getConsoleURL(ctx, promLoader)
+	if err != nil {
+		slog.Error("Failed retrieving console URL from metrics", "error", err)
+	}
+	incidentsMap, err := i.transformPromValueToIncident(val, queryTimeRange, clusterIDconsoleURL)
 	if err != nil {
 		slog.Error("Failed to transform metric data", "error", err)
 		return nil, nil, err
@@ -200,7 +195,9 @@ func processSampleTime(firstSample, lastSample model.SamplePair, qRange v1.Range
 }
 
 // transformPromValueToIncident transforms the metrics data to map of incidents
-func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qRange v1.Range) (map[string]Incident, error) {
+func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector,
+	qRange v1.Range,
+	clusterIDConsoleURL map[string]string) (map[string]Incident, error) {
 
 	incidents := make(map[string]Incident, len(dataVec))
 	for _, v := range dataVec {
@@ -223,7 +220,7 @@ func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qR
 		groupId := string(v.Metric["group_id"])
 		component := string(v.Metric["component"])
 		clusterName := string(v.Metric["cluster"])
-		clusterID := string(v.Metric["clusterID"])
+		clusterID := string(v.Metric[clusterIDStr])
 
 		if existingInc, ok := incidents[groupId]; ok {
 			existingInc.ComponentsSet[component] = struct{}{}
@@ -267,8 +264,12 @@ func (i *IncidentTool) transformPromValueToIncident(dataVec prom.RangeVector, qR
 					labels.String(): {},
 				},
 			}
-			if i.cfg.consoleURL != "" {
-				incident.URL = fmt.Sprintf("%s/monitoring/incidents?groupId=%s", i.cfg.consoleURL, groupId)
+			if clusterIDConsoleURL != nil {
+				if clusterID != "" {
+					incident.URL = fmt.Sprintf("%s/monitoring/incidents?groupId=%s", clusterIDConsoleURL[clusterID], groupId)
+				} else {
+					incident.URL = fmt.Sprintf("%s/monitoring/incidents?groupId=%s", clusterIDConsoleURL[defaultStr], groupId)
+				}
 			}
 			incident.UpdateStatus()
 			incidents[groupId] = incident
@@ -332,7 +333,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 			for _, firingAlert := range alerts {
 				// check for multicluster/ACM environment
 				if inc.ClusterID != "" {
-					clusterIDMatch := string(firingAlert["clusterID"]) == inc.ClusterID
+					clusterIDMatch := string(firingAlert[clusterIDStr]) == inc.ClusterID
 					// if the alert cluster ID does not match incident cluster ID, skip
 					if !clusterIDMatch {
 						continue
@@ -363,7 +364,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 						// if an alert, already labels cleaned, was already registered in the map
 						// we should verify if it was marked as silenced
-						lastSilenced, err := strconv.ParseBool(string(updatedAlertsMap[key]["silenced"]))
+						lastSilenced, err := strconv.ParseBool(string(updatedAlertsMap[key][silencedStr]))
 						if err != nil {
 							slog.Error("failed to parse bool", "error", err)
 							return nil
@@ -371,10 +372,10 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 						// the && operator allow us to get the following behaviour
 						// if all are silenced the ending property will be true
 						// if even just one is not silenced the ending property will be false
-						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", lastSilenced && silenced))
+						updatedAlert[silencedStr] = model.LabelValue(fmt.Sprintf("%t", lastSilenced && silenced))
 						updatedAlertsMap[key] = updatedAlert
 					} else {
-						updatedAlert["silenced"] = model.LabelValue(fmt.Sprintf("%t", silenced))
+						updatedAlert[silencedStr] = model.LabelValue(fmt.Sprintf("%t", silenced))
 						updatedAlertsMap[key] = updatedAlert
 					}
 				}
@@ -393,45 +394,45 @@ func cleanupLabels(m model.LabelSet) model.LabelSet {
 	updatedLS := m.Clone()
 	updatedLS["status"] = updatedLS["alertstate"]
 	updatedLS["name"] = updatedLS["alertname"]
-	if clusterID := updatedLS["clusterID"]; clusterID != "" {
-		updatedLS["cluster_id"] = clusterID
+	if cID := updatedLS[clusterIDStr]; cID != "" {
+		updatedLS["cluster_id"] = cID
 	}
 	delete(updatedLS, "__name__")
 	delete(updatedLS, "prometheus")
 	delete(updatedLS, "alertstate")
 	delete(updatedLS, "alertname")
 	delete(updatedLS, "pod")
-	delete(updatedLS, "clusterID")
+	delete(updatedLS, clusterIDStr)
 	return updatedLS
 }
 
-// getConsoleURL tries to read consoleURL from the "cluster" consoles.config.openshift.io
-// resource
-func getConsoleURL() (string, error) {
-	config, err := rest.InClusterConfig()
+// getConsoleURL queries the "console_url" metric from the Prometheus.
+// If there is no metric value, it returns nil and error.
+// If the "clusterID" label exists in the metric, it returns a map of cluster ID to
+// console URL mappin.
+// If the "clusterID" label doesn't exist in the metric, it returns a map
+// with one key-value pair with "default" key and
+// the console URL.
+func getConsoleURL(ctx context.Context, prom prom.Loader) (map[string]string, error) {
+	val, err := prom.LoadQuery(ctx, "console_url", time.Now())
 	if err != nil {
-		return "", err
-	}
-	cli, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	unstConsole, err := cli.Resource(
-		schema.GroupVersionResource{Group: "config.openshift.io", Version: "v1", Resource: "consoles"}).
-		Get(context.Background(), "cluster", metav1.GetOptions{})
-	if err != nil {
-		return "", err
+	if len(val) == 0 {
+		return nil, fmt.Errorf("console_url not found")
 	}
-	consoleURL, ok, err := unstructured.NestedString(unstConsole.Object, "status", "consoleURL")
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", fmt.Errorf("cannot find consoleURL attribute in the 'cluster' console.config.openshift.io resource")
+	if _, ok := val[0][clusterIDStr]; ok {
+		result := make(map[string]string, len(val))
+		for _, v := range val {
+			result[string(v[clusterIDStr])] = string(v["url"])
+		}
+		return result, nil
 	}
 
-	return consoleURL, nil
+	return map[string]string{
+		defaultStr: string(val[0]["url"]),
+	}, nil
 }
 
 func defaultPrometheusLoader(promURL, token string) (prom.Loader, error) {
