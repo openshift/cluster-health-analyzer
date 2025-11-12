@@ -41,6 +41,8 @@ const (
 	clusterIDStr = "clusterID"
 	defaultStr   = "default"
 	silencedStr  = "silenced"
+
+	defaultTimeRangeHours = 360
 )
 
 type IncidentTool struct {
@@ -57,7 +59,7 @@ type incidentToolCfg struct {
 }
 
 type GetIncidentsParams struct {
-	MaxAgeHours uint `json:"max_age_hours"`
+	TimeRange uint `json:"time_range"`
 }
 
 var (
@@ -73,11 +75,11 @@ var (
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"max_age_hours": {
+				"time_range": {
 					Type:        "number",
 					Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
 					Minimum:     utils.Ptr(float64(1)),
-					Maximum:     utils.Ptr(float64(360)),
+					Maximum:     utils.Ptr(float64(defaultTimeRangeHours)),
 				},
 			},
 		},
@@ -119,14 +121,14 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 		return nil, nil, err
 	}
 
-	maxAgeHours := 360 // 15 days default
-	if params.MaxAgeHours > 0 {
-		maxAgeHours = int(params.MaxAgeHours)
+	timeRange := defaultTimeRangeHours
+	if params.TimeRange > 0 {
+		timeRange = int(params.TimeRange)
 	}
 
 	timeNow := time.Now()
 	queryTimeRange := v1.Range{
-		Start: timeNow.Add(-time.Duration(maxAgeHours) * time.Hour),
+		Start: timeNow.Add(-time.Duration(timeRange) * time.Hour),
 		End:   timeNow,
 		Step:  300 * time.Second,
 	}

@@ -34,11 +34,11 @@ var (
 		InputSchema: &jsonschema.Schema{
 			Type: "object",
 			Properties: map[string]*jsonschema.Schema{
-				"max_age_hours": {
+				"time_range": {
 					Type:        "number",
 					Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
 					Minimum:     utils.Ptr(float64(1)),
-					Maximum:     utils.Ptr(float64(360)),
+					Maximum:     utils.Ptr(float64(defaultTimeRangeHours)),
 				},
 			},
 		},
@@ -177,7 +177,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
 				request: &mcp.CallToolRequest{},
 				params: GetIncidentsParams{
-					MaxAgeHours: uint(300),
+					TimeRange: uint(300),
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
