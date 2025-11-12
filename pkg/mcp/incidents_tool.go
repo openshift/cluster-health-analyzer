@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -17,7 +18,6 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
-	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -38,11 +38,14 @@ var (
 )
 
 const (
+	getIncidentsToolName  = "get_incidents"
+	defaultTimeRangeHours = 360
+)
+
+const (
 	clusterIDStr = "clusterID"
 	defaultStr   = "default"
 	silencedStr  = "silenced"
-
-	defaultTimeRangeHours = 360
 )
 
 type IncidentTool struct {
@@ -59,29 +62,45 @@ type incidentToolCfg struct {
 }
 
 type GetIncidentsParams struct {
-	TimeRange uint `json:"time_range"`
+	TimeRange   uint   `json:"time_range"`
+	MinSeverity string `json:"min_severity"`
 }
 
 var (
+	paramsByTool = map[string]map[string]*jsonschema.Schema{
+		getIncidentsToolName: {
+			"time_range": {
+				Type: "number",
+				Default: func(num int) json.RawMessage {
+					bytes, _ := json.Marshal(num)
+					return json.RawMessage(bytes)
+				}(defaultTimeRangeHours),
+				Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+				Minimum:     jsonschema.Ptr(float64(1)),
+				Maximum:     jsonschema.Ptr(float64(defaultTimeRangeHours)),
+			},
+			"min_severity": {
+				Type:        "string",
+				Default:     json.RawMessage([]byte(strconv.Quote(processor.Warning.String()))),
+				Pattern:     fmt.Sprintf("^(?i)(%s|%s|%s)$", processor.Healthy.String(), processor.Warning.String(), processor.Critical.String()),
+				Description: "Minimum severity level to be applied as filter for incidents. Allowed values, from lower severity to higher severity, can be: info, warning and critical. Default: warning.",
+			},
+		},
+	}
+
 	defaultMcpGetIncidentsTool = mcp.Tool{
-		Name: "get_incidents",
+		Name: getIncidentsToolName,
 		Description: `List the current firing incidents in the cluster. 
 		One incident is a group of related alerts that are likely triggered by the same root cause.
-		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
+		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.
+		`,
 		Annotations: &mcp.ToolAnnotations{
 			Title:        "Provides information about Incidents in the cluster",
 			ReadOnlyHint: true,
 		},
 		InputSchema: &jsonschema.Schema{
-			Type: "object",
-			Properties: map[string]*jsonschema.Schema{
-				"time_range": {
-					Type:        "number",
-					Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
-					Minimum:     utils.Ptr(float64(1)),
-					Maximum:     utils.Ptr(float64(defaultTimeRangeHours)),
-				},
-			},
+			Type:       "object",
+			Properties: paramsByTool[getIncidentsToolName],
 		},
 	}
 )
@@ -126,6 +145,9 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 		timeRange = int(params.TimeRange)
 	}
 
+	// the method ParseHealthValue will default to warning in the case of not recognized severity
+	minSeverity := processor.ParseHealthValue(params.MinSeverity)
+
 	timeNow := time.Now()
 	queryTimeRange := v1.Range{
 		Start: timeNow.Add(-time.Duration(timeRange) * time.Hour),
@@ -154,7 +176,11 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 		return nil, nil, err
 	}
 
-	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange)
+	incidents := filterIncidentsBySeverity(
+		getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange),
+		minSeverity,
+	)
+
 	r := Response{
 		Incidents: Incidents{
 			Total:     len(incidents),
@@ -385,6 +411,12 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 		}
 
 		inc.Alerts = slices.Collect(maps.Values(updatedAlertsMap))
+
+		// sorting introduced to resolve unit tests flakyness
+		slices.SortFunc(inc.Alerts, func(ls1, ls2 model.LabelSet) int {
+			return strings.Compare(ls1.String(), ls2.String())
+		})
+
 		incidentsSlice = append(incidentsSlice, inc)
 	}
 	return incidentsSlice
@@ -472,4 +504,18 @@ func isAlertSilenced(alert model.LabelSet, silences []models.Alert) bool {
 	}
 
 	return false
+}
+
+func filterIncidentsBySeverity(incidents []Incident, minSeverity processor.HealthValue) []Incident {
+	filteredList := make([]Incident, 0)
+	for _, inc := range incidents {
+		incSeverity := processor.ParseHealthValue(inc.Severity)
+
+		if incSeverity < minSeverity {
+			continue
+		}
+
+		filteredList = append(filteredList, inc)
+	}
+	return filteredList
 }
