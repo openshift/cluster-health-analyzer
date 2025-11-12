@@ -1,4 +1,4 @@
-FROM golang:1.24 as builder
+FROM golang:1.24.10 as builder
 ARG TARGETARCH
 
 WORKDIR /src
