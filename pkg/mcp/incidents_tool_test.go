@@ -8,16 +8,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/processor"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
 	"github.com/openshift/cluster-health-analyzer/pkg/test/mocks"
+	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
+)
+
+var (
+	testMcpTool = mcp.Tool{
+		Name: "get_incidents",
+		Description: `List the current firing incidents in the cluster. 
+		One incident is a group of related alerts that are likely triggered by the same root cause.
+		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.`,
+		Annotations: &mcp.ToolAnnotations{
+			Title: "Provides information about Incidents in the cluster",
+		},
+		InputSchema: &jsonschema.Schema{
+			Type: "object",
+			Properties: map[string]*jsonschema.Schema{
+				"max_age_hours": {
+					Type:        "number",
+					Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
+					Minimum:     utils.Ptr(float64(1)),
+					Maximum:     utils.Ptr(float64(360)),
+				},
+			},
+		},
+	}
 )
 
 func TestIncidentTool_IncidentsHandler(t *testing.T) {
@@ -85,7 +110,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: model.Now().Add(-20 * time.Minute),
 							},
 						},
 					},
@@ -100,7 +125,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
+								Timestamp: model.Now().Add(-20 * time.Minute),
 							},
 						},
 					},
@@ -152,12 +177,11 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
 				request: &mcp.CallToolRequest{},
 				params: GetIncidentsParams{
-					TimeRange:   uint(300),
-					MinSeverity: processor.Healthy.String(),
+					MaxAgeHours: uint(300),
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now()
+				baseTime := model.Now().Add(-20 * time.Minute).Time()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -166,205 +190,27 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 								GroupId:            "123",
 								Severity:           "warning",
 								Status:             "firing",
-								StartTime:          baseTime.Add(-1 * time.Minute).Time().Format(time.RFC3339),
+								StartTime:          baseTime.Add(19 * time.Minute).Format(time.RFC3339),
 								AffectedComponents: []string{""},
 								URL:                "test.url/monitoring/incidents?groupId=123",
 								Alerts: []model.LabelSet{
-									{
-										"name":       "UpdateAvailable",
-										"namespace":  "openshift-monitoring",
-										"severity":   "info",
-										"status":     "resolved",
-										"silenced":   "true",
-										"start_time": model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
-									},
 									{
 										"name":       "ClusterOperatorDown",
 										"namespace":  "openshift-monitoring",
 										"severity":   "warning",
 										"status":     "resolved",
 										"silenced":   "false",
-										"start_time": model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
 									},
-								},
-							},
-						},
-					},
-				}
-				data, _ := json.Marshal(r)
-				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{
-						&mcp.TextContent{Text: response},
-					},
-				}
-			}(),
-		},
-		{
-			name: "happy path - warning min_severity",
-			promLoader: func() prom.Loader {
-				mocked := mocks.NewMockPrometheusLoader(ctrl)
-
-				mocked.EXPECT().LoadVectorRange(gomock.Any(), processor.ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
-					{
-						Metric: model.LabelSet{
-							"group_id":      "123",
-							"src_alertname": "ClusterOperatorDown",
-							"src_namespace": "openshift-monitoring",
-							"src_severity":  "warning",
-						},
-						Samples: []model.SamplePair{
-							{
-								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
-							},
-						},
-					},
-					{
-						Metric: model.LabelSet{
-							"group_id":      "123",
-							"src_alertname": "UpdateAvailable",
-							"src_namespace": "openshift-monitoring",
-							"src_severity":  "info",
-						},
-						Samples: []model.SamplePair{
-							{
-								Value:     1,
-								Timestamp: model.Now().Add(-1 * time.Minute),
-							},
-						},
-					},
-					{
-						Metric: model.LabelSet{
-							"group_id":      "456",
-							"src_alertname": "UpdateAvailable",
-							"src_namespace": "openshift-monitoring",
-							"src_severity":  "info",
-						},
-						Samples: []model.SamplePair{
-							{
-								Value:     0,
-								Timestamp: model.Now().Add(-1 * time.Minute),
-							},
-						},
-					},
-				}, nil)
-				mocked.EXPECT().LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).Return(prom.RangeVector{
-					{
-						Metric: model.LabelSet{
-							"alertname":  "ClusterOperatorDown",
-							"namespace":  "openshift-monitoring",
-							"severity":   "warning",
-							"pod":        "bar",
-							"alertstate": "firing",
-						},
-						Samples: []model.SamplePair{
-							{
-								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
-							},
-						},
-					},
-					{
-						Metric: model.LabelSet{
-							"alertname":  "ClusterOperatorDown",
-							"namespace":  "openshift-monitoring",
-							"severity":   "warning",
-							"pod":        "foo",
-							"alertstate": "firing",
-						},
-						Samples: []model.SamplePair{
-							{
-								Value:     1,
-								Timestamp: model.Now().Add(-15 * time.Minute),
-							},
-						},
-					},
-					{
-						Metric: model.LabelSet{
-							"alertname":  "UpdateAvailable",
-							"namespace":  "openshift-monitoring",
-							"severity":   "info",
-							"alertstate": "firing",
-						},
-						Samples: []model.SamplePair{
-							{
-								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
-							},
-						},
-					},
-				}, nil)
-
-				mocked.EXPECT().LoadQuery(gomock.Any(), `console_url`, gomock.Any()).Return(
-					[]model.LabelSet{
-						{model.LabelName("url"): model.LabelValue("test.url")},
-					}, nil)
-				return mocked
-			}(),
-			amLoader: func() alertmanager.Loader {
-				silencedAlerts := []models.Alert{
-					{
-						Labels: map[string]string{
-							"alertname": "ClusterOperatorDown",
-							"namespace": "openshift-monitoring",
-							"severity":  "warning",
-							"pod":       "foo",
-						},
-					},
-					{
-						Labels: map[string]string{
-							"alertname": "UpdateAvailable",
-							"namespace": "openshift-monitoring",
-							"severity":  "info",
-						},
-					},
-				}
-				mocked := mocks.NewMockAlertManagerLoader(ctrl)
-				mocked.EXPECT().SilencedAlerts().Return(silencedAlerts, nil)
-				return mocked
-			}(),
-			args: args{
-				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
-				request: &mcp.CallToolRequest{},
-				params: GetIncidentsParams{
-					TimeRange:   uint(300),
-					MinSeverity: processor.Warning.String(),
-				},
-			},
-			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now()
-				r := Response{
-					Incidents: Incidents{
-						Total: 1,
-						Incidents: []Incident{
-							{
-								GroupId:            "123",
-								Severity:           "warning",
-								Status:             "firing",
-								StartTime:          baseTime.Add(-1 * time.Minute).Time().Format(time.RFC3339),
-								AffectedComponents: []string{""},
-								URL:                "test.url/monitoring/incidents?groupId=123",
-								Alerts: []model.LabelSet{
 									{
 										"name":       "UpdateAvailable",
 										"namespace":  "openshift-monitoring",
 										"severity":   "info",
 										"status":     "resolved",
 										"silenced":   "true",
-										"start_time": model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
-									},
-									{
-										"name":       "ClusterOperatorDown",
-										"namespace":  "openshift-monitoring",
-										"severity":   "warning",
-										"status":     "resolved",
-										"silenced":   "false",
-										"start_time": model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
 									},
 								},
 							},
@@ -385,7 +231,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := IncidentTool{
-				Tool: defaultMcpGetIncidentsTool,
+				Tool: testMcpTool,
 				getPrometheusLoaderFn: func(url, _ string) (prom.Loader, error) {
 					return tt.promLoader, nil
 				},
@@ -394,7 +240,6 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			}
 			got, _, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request, tt.args.params)
-
 			assert.Equal(t, tt.expectedResult, got)
 			assert.Equal(t, tt.expectedErr, err)
 		})
