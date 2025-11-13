@@ -40,9 +40,7 @@ var (
 const (
 	getIncidentsToolName  = "get_incidents"
 	defaultTimeRangeHours = 360
-)
 
-const (
 	clusterIDStr = "clusterID"
 	defaultStr   = "default"
 	silencedStr  = "silenced"
@@ -70,11 +68,8 @@ var (
 	paramsByTool = map[string]map[string]*jsonschema.Schema{
 		getIncidentsToolName: {
 			"time_range": {
-				Type: "number",
-				Default: func(num int) json.RawMessage {
-					bytes, _ := json.Marshal(num)
-					return json.RawMessage(bytes)
-				}(defaultTimeRangeHours),
+				Type:        "number",
+				Default:     json.RawMessage([]byte(strconv.Itoa(defaultTimeRangeHours))),
 				Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
 				Minimum:     jsonschema.Ptr(float64(1)),
 				Maximum:     jsonschema.Ptr(float64(defaultTimeRangeHours)),
@@ -414,7 +409,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 		// sorting introduced to resolve unit tests flakyness
 		slices.SortFunc(inc.Alerts, func(ls1, ls2 model.LabelSet) int {
-			return strings.Compare(ls1.String(), ls2.String())
+			return strings.Compare(string(ls1["start_time"]), string(ls2["start_time"]))
 		})
 
 		incidentsSlice = append(incidentsSlice, inc)

@@ -85,7 +85,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: model.Now().Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -100,7 +100,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: model.Now().Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -157,7 +157,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now().Add(-20 * time.Minute).Time()
+				baseTime := model.Now()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -166,27 +166,27 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 								GroupId:            "123",
 								Severity:           "warning",
 								Status:             "firing",
-								StartTime:          baseTime.Add(19 * time.Minute).Format(time.RFC3339),
+								StartTime:          baseTime.Add(-1 * time.Minute).Time().Format(time.RFC3339),
 								AffectedComponents: []string{""},
 								URL:                "test.url/monitoring/incidents?groupId=123",
 								Alerts: []model.LabelSet{
-									{
-										"name":       "ClusterOperatorDown",
-										"namespace":  "openshift-monitoring",
-										"severity":   "warning",
-										"status":     "resolved",
-										"silenced":   "false",
-										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
-									},
 									{
 										"name":       "UpdateAvailable",
 										"namespace":  "openshift-monitoring",
 										"severity":   "info",
 										"status":     "resolved",
 										"silenced":   "true",
-										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
+										"start_time": model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+									},
+									{
+										"name":       "ClusterOperatorDown",
+										"namespace":  "openshift-monitoring",
+										"severity":   "warning",
+										"status":     "resolved",
+										"silenced":   "false",
+										"start_time": model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
 									},
 								},
 							},
@@ -263,7 +263,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: model.Now().Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -278,7 +278,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 						Samples: []model.SamplePair{
 							{
 								Value:     1,
-								Timestamp: model.Now().Add(-20 * time.Minute),
+								Timestamp: model.Now().Add(-15 * time.Minute),
 							},
 						},
 					},
@@ -335,7 +335,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				},
 			},
 			expectedResult: func() *mcp.CallToolResult {
-				baseTime := model.Now().Add(-20 * time.Minute).Time()
+				baseTime := model.Now()
 				r := Response{
 					Incidents: Incidents{
 						Total: 1,
@@ -344,27 +344,27 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 								GroupId:            "123",
 								Severity:           "warning",
 								Status:             "firing",
-								StartTime:          baseTime.Add(19 * time.Minute).Format(time.RFC3339),
+								StartTime:          baseTime.Add(-1 * time.Minute).Time().Format(time.RFC3339),
 								AffectedComponents: []string{""},
 								URL:                "test.url/monitoring/incidents?groupId=123",
 								Alerts: []model.LabelSet{
-									{
-										"name":       "ClusterOperatorDown",
-										"namespace":  "openshift-monitoring",
-										"severity":   "warning",
-										"status":     "resolved",
-										"silenced":   "false",
-										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
-									},
 									{
 										"name":       "UpdateAvailable",
 										"namespace":  "openshift-monitoring",
 										"severity":   "info",
 										"status":     "resolved",
 										"silenced":   "true",
-										"start_time": model.LabelValue(baseTime.Format(time.RFC3339)),
-										"end_time":   model.LabelValue(baseTime.Format(time.RFC3339)),
+										"start_time": model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-20 * time.Minute).Time().Format(time.RFC3339)),
+									},
+									{
+										"name":       "ClusterOperatorDown",
+										"namespace":  "openshift-monitoring",
+										"severity":   "warning",
+										"status":     "resolved",
+										"silenced":   "false",
+										"start_time": model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
+										"end_time":   model.LabelValue(baseTime.Add(-15 * time.Minute).Time().Format(time.RFC3339)),
 									},
 								},
 							},
