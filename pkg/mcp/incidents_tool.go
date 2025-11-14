@@ -77,7 +77,7 @@ var (
 			"min_severity": {
 				Type:        "string",
 				Default:     json.RawMessage([]byte(strconv.Quote(processor.Warning.String()))),
-				Pattern:     fmt.Sprintf("^(?i)(%s|%s|%s)$", processor.Healthy.String(), processor.Warning.String(), processor.Critical.String()),
+				Pattern:     fmt.Sprintf("(?i)(%s|%s|%s)$", processor.Healthy.String(), processor.Warning.String(), processor.Critical.String()),
 				Description: "Minimum severity level to be applied as filter for incidents. Allowed values, from lower severity to higher severity, can be: info, warning and critical. Default: warning.",
 			},
 		},
