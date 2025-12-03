@@ -14,6 +14,7 @@ import (
 
 	runtimeclient "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
+	"github.com/openshift/cluster-health-analyzer/pkg/utils"
 	"github.com/prometheus/alertmanager/api/v2/client"
 	"github.com/prometheus/alertmanager/api/v2/client/alert"
 	"github.com/prometheus/alertmanager/api/v2/models"
@@ -112,6 +113,8 @@ func (l *loader) loadAlerts(active, silenced bool, labels []string) ([]models.Al
 	params := alert.NewGetAlertsParams().
 		WithActive(&active).
 		WithSilenced(&silenced).
+		WithInhibited(utils.Ptr(false)).
+		WithUnprocessed(utils.Ptr(false)).
 		WithFilter(labels)
 
 	alertsOK, err := l.cli.Alert.GetAlerts(params)
