@@ -254,7 +254,7 @@ func metricWithNameAndStatus(name string, status HealthStatus) prom.Metric {
 // are:
 // - resource - the K8s resource
 // - name - the K8s object name
-// - result - health status result
+// - status - health status
 // - namespace - added only when the namespace is not empty (namespaced objects)
 // - progressing - bool telling whether the object is in progressing state
 func metricWithObjectAttributes(name string, o ObjectStatus) prom.Metric {
@@ -262,7 +262,7 @@ func metricWithObjectAttributes(name string, o ObjectStatus) prom.Metric {
 		"component":   model.LabelValue(name),
 		"resource":    model.LabelValue(o.Resource),
 		"name":        model.LabelValue(o.Name),
-		"result":      model.LabelValue(o.HealthStatus.String()),
+		"status":      model.LabelValue(o.HealthStatus.String()),
 		"progressing": model.LabelValue(strconv.FormatBool(o.Progressing)),
 	}
 	if o.Namespace != "" {

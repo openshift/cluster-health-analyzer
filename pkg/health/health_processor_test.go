@@ -467,7 +467,7 @@ func TestComponentHealthsToMetrics(t *testing.T) {
 						"namespace":   "test-namespace",
 						"progressing": "true",
 						"resource":    "quxes",
-						"result":      "warning",
+						"status":      "warning",
 					},
 					Value: 1,
 				},
