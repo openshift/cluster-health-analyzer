@@ -32,15 +32,15 @@ $(GOLANGCI_LINT):
 # Test
 # ----------------
 
-## test> run unit tests
+## test> run unit tests (excludes integration tests)
 .PHONY: test
 test: 
-	go test -race ./...
+	go test -race $$(go list ./... | grep -v /test/integration)
 
-## test-verbose> run unit tests with verbose output
+## test-verbose> run unit tests with verbose output (excludes integration tests)
 .PHONY: test-verbose
 test-verbose:
-	go test -race -v ./...
+	go test -race -v $$(go list ./... | grep -v /test/integration)
 
 # ----------------
 # Develop
@@ -93,3 +93,33 @@ undeploy:
 ## precommit> run linting and unit tests
 .PHONY: precommit
 precommit: lint test
+
+# ----------------
+# Integration Tests
+# ----------------
+
+GINKGO := $(GOBIN)/ginkgo
+
+# Default values for integration tests
+export CHA_IMAGE ?= quay.io/openshiftanalytics/cluster-health-analyzer:latest
+export MANIFESTS_PATH ?= manifests/backend
+export DEPLOYMENT_NAME ?= cluster-health-analyzer
+export NAMESPACE ?= openshift-cluster-health-analyzer
+
+$(GINKGO):
+	go install github.com/onsi/ginkgo/v2/ginkgo@latest
+
+## deploy-integration> deploy to cluster for integration testing
+.PHONY: deploy-integration
+deploy-integration:
+	./hack/deploy-integration.sh
+
+## undeploy-integration> remove integration test deployment
+.PHONY: undeploy-integration
+undeploy-integration:
+	oc delete -f $(MANIFESTS_PATH)/ --ignore-not-found
+
+## test-integration> run integration tests (assumes deployment exists)
+.PHONY: test-integration
+test-integration: $(GINKGO)
+	$(GINKGO) -v ./test/integration/...
