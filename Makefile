@@ -98,16 +98,14 @@ precommit: lint test
 # Integration Tests
 # ----------------
 
-GINKGO := $(GOBIN)/ginkgo
+GINKGO_COLOR := $(if $(CI),--no-color,)
+GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo $(GINKGO_COLOR)
 
 # Default values for integration tests
 export CHA_IMAGE ?= quay.io/openshiftanalytics/cluster-health-analyzer:latest
 export MANIFESTS_PATH ?= manifests/backend
 export DEPLOYMENT_NAME ?= cluster-health-analyzer
 export NAMESPACE ?= openshift-cluster-health-analyzer
-
-$(GINKGO):
-	go install github.com/onsi/ginkgo/v2/ginkgo@latest
 
 ## deploy-integration> deploy to cluster for integration testing
 .PHONY: deploy-integration
@@ -121,5 +119,5 @@ undeploy-integration:
 
 ## test-integration> run integration tests (assumes deployment exists)
 .PHONY: test-integration
-test-integration: $(GINKGO)
+test-integration:
 	$(GINKGO) -v ./test/integration/...
