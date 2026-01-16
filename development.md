@@ -49,6 +49,22 @@ Before sending your changes, make sure to run `make precommit` (this will run bo
 to avoid CI failures for your PR. There are other useful commands such as `make proxy` and `make deploy`. For
 full list run `make help`.
 
+### Integration Tests
+
+It is advisable to run `make test-integration`.
+
+Prerequisites:
+- Log in to the cluster via `oc login`
+- Deploy cluster health analyzer: `make deploy-integration` (minimum backend deployment)
+- Proxy Prometheus to localhost: `make proxy`
+
+### CI
+
+Lint, unit, and integration tests run automatically in CI and are required.
+
+Optionally, you can trigger the `/test e2e-incidents-ui` CI job for incident-detection UI tests.
+It is recommended to do so on any change that could influence the frontend behavior.
+
 ## Data simulation
 
 For development purposes, it's useful to have some data populated in Prometheus.
