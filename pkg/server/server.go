@@ -75,7 +75,7 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if options.EnableComponentsHealth {
+	if !options.DisableComponentsHealth {
 		componentsPath := defaultComponentsConfigPath
 		if options.ComponentsPath != "" {
 			componentsPath = options.ComponentsPath
