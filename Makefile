@@ -106,6 +106,8 @@ precommit: lint test
 # Integration Tests
 # ----------------
 
+# Use go run to ensure ginkgo CLI matches go.mod version
+# Use --no-color in CI to avoid ANSI escape codes in logs
 GINKGO_COLOR := $(if $(CI),--no-color,)
 GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo $(GINKGO_COLOR)
 
