@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{NAME}}
+  namespace: {{NAMESPACE}}
+  labels:
+    test-type: {{TEST_TYPE}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{NAME}}
+  template:
+    metadata:
+      labels:
+        app: {{NAME}}
+        test-type: {{TEST_TYPE}}
+    spec:
+      containers:
+      - name: crash-loop
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c", "exit 1"]
+        resources:
+          requests:
+            cpu: "1m"
+            memory: "4Mi"
+          limits:
+            cpu: "10m"
+            memory: "16Mi"
+

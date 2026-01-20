@@ -9,45 +9,50 @@ import (
 //go:embed testdata/*.yaml
 var testDataFS embed.FS
 
+// Template paths relative to testdata directory.
 const (
-	DeploymentFile = "testdata/crashing_deployment.yaml"
-	RuleFile       = "testdata/crashloop_prometheusrule.yaml"
+	DeploymentTemplate     = "testdata/crashing_deployment.yaml"
+	PrometheusRuleTemplate = "testdata/crashloop_prometheusrule.yaml"
 )
 
-// RenderDeployment loads the embedded deployment template and renders it with the given parameters.
-func RenderDeployment(name, namespace, testType string) (string, error) {
-	content, err := testDataFS.ReadFile(DeploymentFile)
-	if err != nil {
-		return "", err
+// DeploymentReplacements returns the standard replacements for a deployment template.
+func DeploymentReplacements(name, namespace, testType string) map[string]string {
+	return map[string]string{
+		"{{NAME}}":      name,
+		"{{NAMESPACE}}": namespace,
+		"{{TEST_TYPE}}": testType,
 	}
-
-	data := map[string]string{
-		"Name":      name,
-		"Namespace": namespace,
-		"TestType":  testType,
-	}
-
-	return framework.Render("deployment", content, data)
 }
 
-// RenderRule loads the embedded PrometheusRule template and renders it with the given parameters.
-func RenderRule(ruleName, alertName, podPrefix, testType string) (string, error) {
-	content, err := testDataFS.ReadFile(RuleFile)
-	if err != nil {
-		return "", err
+// RuleReplacements returns the standard replacements for a PrometheusRule template.
+func RuleReplacements(ruleName, alertName, podPrefix, testType string) map[string]string {
+	return map[string]string{
+		"{{RULE_NAME}}":  ruleName,
+		"{{ALERT_NAME}}": alertName,
+		"{{POD_PREFIX}}": podPrefix,
+		"{{TEST_TYPE}}":  testType,
 	}
-
-	data := map[string]string{
-		"RuleName":  ruleName,
-		"AlertName": alertName,
-		"PodPrefix": podPrefix,
-		"TestType":  testType,
-	}
-
-	return framework.Render("rule", content, data)
 }
 
 // PodSelector returns the label selector for pods created by a deployment.
 func PodSelector(deploymentName string) string {
 	return "app=" + deploymentName
+}
+
+// RenderDeployment loads the embedded deployment template and renders it with the given parameters.
+func RenderDeployment(name, namespace, testType string) (string, error) {
+	content, err := testDataFS.ReadFile(DeploymentTemplate)
+	if err != nil {
+		return "", err
+	}
+	return framework.RenderTemplate(string(content), DeploymentReplacements(name, namespace, testType)), nil
+}
+
+// RenderRule loads the embedded PrometheusRule template and renders it with the given parameters.
+func RenderRule(ruleName, alertName, podPrefix, testType string) (string, error) {
+	content, err := testDataFS.ReadFile(PrometheusRuleTemplate)
+	if err != nil {
+		return "", err
+	}
+	return framework.RenderTemplate(string(content), RuleReplacements(ruleName, alertName, podPrefix, testType)), nil
 }
