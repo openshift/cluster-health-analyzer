@@ -4,7 +4,12 @@ GOBIN=$(shell go env GOPATH)/bin
 else
 GOBIN=$(shell go env GOBIN)
 endif
+
+# Tool binaries
 GOLANGCI_LINT := $(GOBIN)/golangci-lint
+
+# Include integration testing targets
+include test.mk
 
 # ----------------
 # Help
@@ -93,31 +98,3 @@ undeploy:
 ## precommit> run linting and unit tests
 .PHONY: precommit
 precommit: lint test
-
-# ----------------
-# Integration Tests
-# ----------------
-
-GINKGO_COLOR := $(if $(CI),--no-color,)
-GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo $(GINKGO_COLOR)
-
-# Default values for integration tests
-export CHA_IMAGE ?= quay.io/openshiftanalytics/cluster-health-analyzer:latest
-export MANIFESTS_PATH ?= manifests/backend
-export DEPLOYMENT_NAME ?= cluster-health-analyzer
-export NAMESPACE ?= openshift-cluster-health-analyzer
-
-## deploy-integration> deploy to cluster for integration testing
-.PHONY: deploy-integration
-deploy-integration:
-	./hack/deploy-integration.sh
-
-## undeploy-integration> remove integration test deployment
-.PHONY: undeploy-integration
-undeploy-integration:
-	oc delete -f $(MANIFESTS_PATH)/ --ignore-not-found
-
-## test-integration> run integration tests (assumes deployment exists)
-.PHONY: test-integration
-test-integration:
-	$(GINKGO) -v ./test/integration/...
