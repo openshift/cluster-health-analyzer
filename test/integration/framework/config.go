@@ -38,7 +38,7 @@ func LoadConfig() *Config {
 		DeploymentName: getEnvOrDefault("DEPLOYMENT_NAME", "cluster-health-analyzer"),
 		Namespace:      getEnvOrDefault("NAMESPACE", "openshift-cluster-health-analyzer"),
 		Kubeconfig:     os.Getenv("KUBECONFIG"),
-		ThanosURL:      getEnvOrDefault("THANOS_URL", "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091"),
+		ThanosURL:      getEnvOrDefault("THANOS_URL", "http://localhost:9090"),
 		ThanosToken:    os.Getenv("THANOS_TOKEN"),
 	}
 }

@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+  labels:
+    test-type: {{ .TestType }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Name }}
+        test-type: {{ .TestType }}
+    spec:
+      containers:
+      - name: crash-loop
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c", "exit 1"]
+        resources:
+          requests:
+            cpu: "1m"
+            memory: "4Mi"
+          limits:
+            cpu: "10m"
+            memory: "16Mi"

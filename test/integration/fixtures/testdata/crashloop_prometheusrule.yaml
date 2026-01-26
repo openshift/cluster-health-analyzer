@@ -1,0 +1,24 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-prometheus
+    app.kubernetes.io/part-of: openshift-monitoring
+    prometheus: k8s
+    role: alert-rules
+    test-type: {{ .TestType }}
+  name: {{ .RuleName }}
+  namespace: openshift-monitoring
+spec:
+  groups:
+  - name: crashloop-test-{{ .RuleName }}
+    rules:
+    - alert: {{ .AlertName }}
+      annotations:
+        description: 'Pod {{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.pod {{ "}}" }} ({{ "{{" }} $labels.container {{ "}}" }}) is in waiting state (reason: "CrashLoopBackOff").'
+        summary: Pod is crash looping.
+      expr: |
+        max_over_time(kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", pod=~"{{ .PodPrefix }}.*", job="kube-state-metrics"}[5m]) >= 1
+      for: 1m
+      labels:
+        severity: warning
