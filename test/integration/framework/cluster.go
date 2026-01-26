@@ -26,14 +26,33 @@ func (c *Cluster) InNamespace(namespace string) *Cluster {
 
 // --- Resource Operations ---
 
-// Apply applies a YAML file using oc apply -f.
-func (c *Cluster) Apply(ctx context.Context, yamlPath string) error {
-	return c.run(ctx, "apply", "-f", yamlPath)
+// Apply applies YAML content to the cluster via stdin.
+func (c *Cluster) Apply(ctx context.Context, yamlContent string) error {
+	return c.runWithStdin(ctx, yamlContent, "apply", "-f", "-")
 }
 
-// Delete deletes resources defined in a YAML file.
-func (c *Cluster) Delete(ctx context.Context, yamlPath string) error {
-	return c.run(ctx, "delete", "-f", yamlPath, "--ignore-not-found")
+// Delete removes a specific resource by type and name.
+func (c *Cluster) Delete(ctx context.Context, resourceType, name string) error {
+	return c.run(ctx, "delete", resourceType, name, "--ignore-not-found")
+}
+
+// DeleteByLabel removes all resources of a type matching the label selector.
+func (c *Cluster) DeleteByLabel(ctx context.Context, resourceType, labelSelector string) error {
+	return c.run(ctx, "delete", resourceType, "-l", labelSelector, "--ignore-not-found")
+}
+
+// Use this with Eventually to wait for deletion to complete.
+func (c *Cluster) IsGone(ctx context.Context, resourceType, name string) (bool, error) {
+	err := c.run(ctx, "get", resourceType, name)
+	if err != nil {
+		// "not found" or "NotFound" means it's gone (success!)
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "NotFound") {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
 }
 
 // --- Selectors ---
@@ -147,6 +166,18 @@ func (c *Cluster) GetLogs(ctx context.Context, resourceRef string, tailLines int
 func (c *Cluster) run(ctx context.Context, args ...string) error {
 	args = c.addNamespace(args)
 	cmd := exec.CommandContext(ctx, "oc", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("oc %s failed: %w\nOutput: %s", strings.Join(args, " "), err, output)
+	}
+	return nil
+}
+
+
+func (c *Cluster) runWithStdin(ctx context.Context, stdin string, args ...string) error {
+	args = c.addNamespace(args)
+	cmd := exec.CommandContext(ctx, "oc", args...)
+	cmd.Stdin = strings.NewReader(stdin)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("oc %s failed: %w\nOutput: %s", strings.Join(args, " "), err, output)
