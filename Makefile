@@ -7,6 +7,8 @@ endif
 
 # Tool binaries
 GOLANGCI_LINT := $(GOBIN)/golangci-lint
+YQ := $(GOBIN)/yq
+PROMTOOL := $(GOBIN)/promtool
 
 # Include integration testing targets
 include test.mk
@@ -32,6 +34,7 @@ lint: $(GOLANGCI_LINT)
 
 $(GOLANGCI_LINT):
 	./hack/install-golangci-lint.sh
+
 
 # ----------------
 # Test
@@ -98,3 +101,4 @@ undeploy:
 ## precommit> run linting and unit tests
 .PHONY: precommit
 precommit: lint test
+

@@ -41,6 +41,7 @@ func (c *Cluster) DeleteByLabel(ctx context.Context, resourceType, labelSelector
 	return c.run(ctx, "delete", resourceType, "-l", labelSelector, "--ignore-not-found")
 }
 
+// IsGone checks if a resource no longer exists.
 // Use this with Eventually to wait for deletion to complete.
 func (c *Cluster) IsGone(ctx context.Context, resourceType, name string) (bool, error) {
 	err := c.run(ctx, "get", resourceType, name)

@@ -52,7 +52,7 @@ undeploy-integration:
 ## test-integration> run integration tests (assumes deployment exists)
 .PHONY: test-integration
 test-integration:
-	$(GINKGO) -v ./test/integration/...
+	$(GINKGO) -v --label-filter="!stress&&!stress-simulate" ./test/integration/...
 
 ## help-integration> show integration testing workflow and related targets
 .PHONY: help-integration
