@@ -23,24 +23,26 @@ import (
 
 func must(err error) {
 	if err != nil {
-		panic(err)
+		panic(err)	
 	}
 }
 
 var outputFile = "cluster-health-analyzer-openmetrics.txt"
 var scenarioFile string
+var alertsOnly bool
 
 var SimulateCmd = &cobra.Command{
 	Use:   "simulate",
 	Short: "Generate simulated data in openmetrics format",
 	Run: func(cmd *cobra.Command, args []string) {
-		simulate(outputFile, scenarioFile)
+		simulate(outputFile, scenarioFile, alertsOnly)
 	},
 }
 
 func init() {
 	SimulateCmd.Flags().StringVarP(&outputFile, "output", "o", outputFile, "output file")
 	SimulateCmd.Flags().StringVarP(&scenarioFile, "scenario", "s", "", "CSV file with the scenario to simulate")
+	SimulateCmd.Flags().BoolVar(&alertsOnly, "alerts-only", false, "Only output ALERTS metrics (for integration testing)")
 }
 
 var defaultRelativeIntervals = []utils.RelativeInterval{
@@ -354,8 +356,17 @@ func parseIntervalsFromCSV(file io.Reader) ([]utils.RelativeInterval, error) {
 	return intervals, nil
 }
 
+// endTimeBuffer adds extra time to ensure alerts are still "firing" when queried.
+// Without this buffer, alerts end exactly at time.Now() and immediately start
+// becoming stale in Prometheus (5-minute staleness window). This caused integration
+// tests to only see ~80% of alerts because the processor runs after a delay and
+// queries at a later time when some alerts have already gone stale.
+const endTimeBuffer = 10 * time.Minute
+
 func buildAlertIntervals(scenarioFile string) ([]processor.Interval, error) {
-	end := model.TimeFromUnixNano(time.Now().UnixNano())
+	// Add buffer to end time to ensure alerts are still active when the processor runs.
+	// This compensates for delays in test setup and processor polling intervals.
+	end := model.TimeFromUnixNano(time.Now().Add(endTimeBuffer).UnixNano())
 	intervals := defaultRelativeIntervals
 	if scenarioFile != "" {
 		csvIntervals, err := readIntervalsFromCSV(scenarioFile)
@@ -404,7 +415,7 @@ func fmtInterval(
 	return nil
 }
 
-func simulate(outputFile, scenarioFile string) {
+func simulate(outputFile, scenarioFile string, alertsOnly bool) {
 	// Build sample intervals.
 	intervals, err := buildAlertIntervals(scenarioFile)
 	must(err)
@@ -420,6 +431,42 @@ func simulate(outputFile, scenarioFile string) {
 		if i.End.After(end) {
 			end = i.End
 		}
+	}
+
+	f, err := os.Create(outputFile)
+	must(err)
+	defer f.Close() // nolint:errcheck
+
+	w := bufio.NewWriter(f)
+	defer w.Flush() // nolint:errcheck
+
+	// Output ALERTS
+	fprintln(w, "# HELP ALERTS Alert status")
+	fprintln(w, "# TYPE ALERTS gauge")
+	for _, i := range intervals {
+		err := fmtInterval(w, "ALERTS", i.Metric, i.Start, i.End, step, 1)
+		must(err)
+	}
+
+	// When alertsOnly is set, skip the processed metrics - they should be
+	// computed by the cluster-health-analyzer being tested.
+	if alertsOnly {
+		_, err = fmt.Fprint(w, "# EOF")
+		must(err)
+		slog.Info("Openmetrics file saved (alerts only)", "output", outputFile)
+		return
+	}
+
+	// Output cluster_health_components
+	fprintln(w, "# HELP cluster_health_components Cluster health components ranking")
+	fprintln(w, "# TYPE cluster_health_components gauge")
+	ranks := processor.BuildComponentRanks()
+	for _, rank := range ranks {
+		err := fmtInterval(w, "cluster_health_components", model.LabelSet{
+			"layer":     model.LabelValue(rank.Layer),
+			"component": model.LabelValue(rank.Component),
+		}, start, end, step, float64(rank.Rank))
+		must(err)
 	}
 
 	startToIntervals := make(map[model.Time][]processor.Interval)
@@ -441,33 +488,6 @@ func simulate(outputFile, scenarioFile string) {
 		return changes[i].Timestamp.Before(changes[j].Timestamp)
 	})
 
-	f, err := os.Create(outputFile)
-	must(err)
-	defer f.Close() // nolint:errcheck
-
-	w := bufio.NewWriter(f)
-	defer w.Flush() // nolint:errcheck
-
-	// Output ALERTS
-	fprintln(w, "# HELP ALERTS Alert status")
-	fprintln(w, "# TYPE ALERTS gauge")
-	for _, i := range intervals {
-		err := fmtInterval(w, "ALERTS", i.Metric, i.Start, i.End, step, 1)
-		must(err)
-	}
-
-	// Output cluster_health_components
-	fprintln(w, "# HELP cluster_health_components Cluster health components ranking")
-	fprintln(w, "# TYPE cluster_health_components gauge")
-	ranks := processor.BuildComponentRanks()
-	for _, rank := range ranks {
-		err := fmtInterval(w, "cluster_health_components", model.LabelSet{
-			"layer":     model.LabelValue(rank.Layer),
-			"component": model.LabelValue(rank.Component),
-		}, start, end, step, float64(rank.Rank))
-		must(err)
-	}
-
 	gc := &processor.GroupsCollection{}
 	var groupedIntervalsSet []processor.GroupedInterval
 
@@ -476,7 +496,7 @@ func simulate(outputFile, scenarioFile string) {
 		groupedIntervalsSet = append(groupedIntervalsSet, groupedIntervals...)
 	}
 
-	// Output cluster_health_components:map
+	// Output cluster_health_components_map
 	fprintln(w, "# HELP cluster_health_components_map Cluster health components mapping")
 	fprintln(w, "# TYPE cluster_health_components_map gauge")
 
@@ -489,8 +509,6 @@ func simulate(outputFile, scenarioFile string) {
 		err := fmtInterval(w, "cluster_health_components_map", healthMap.Labels(), gi.Start, gi.End, step, float64(healthMap.Health))
 		must(err)
 	}
-	_, err = fmt.Fprint(w, "# EOF")
-	must(err)
 
 	groups := make(map[string][]processor.GroupedInterval)
 	for _, gi := range groupedIntervalsSet {
@@ -515,6 +533,9 @@ func simulate(outputFile, scenarioFile string) {
 	}
 
 	slog.Info("Generated incidents", "num", len(groups))
+
+	_, err = fmt.Fprint(w, "# EOF")
+	must(err)
 
 	slog.Info("Openmetrics file saved", "output", outputFile)
 }
