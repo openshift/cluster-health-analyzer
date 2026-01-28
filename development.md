@@ -51,19 +51,21 @@ full list run `make help`.
 
 ### Integration Tests
 
-It is advisable to run `make test-integration`.
+The integration tests verify the cluster-health-analyzer backend deployed on an OpenShift cluster.
+
+These tests treat cluster-health-analyzer as a black box: they trigger events in the cluster or inject alerts into Prometheus, then observe the resulting metrics that cluster-health-analyzer produces.
+
+You can run them locally with `make test-integration`. Running integration tests is recommended for all PRs.
 
 Prerequisites:
 - Log in to the cluster via `oc login`
-- Deploy cluster health analyzer: `make deploy-integration` (minimum backend deployment)
+- Deploy cluster-health-analyzer: `make deploy-integration` (deploys only the backend; the tests handle no additional setup)
 - Proxy Prometheus to localhost: `make proxy`
 
 ### CI
 
-Lint, unit, and integration tests run automatically in CI and are required.
+Lint, unit, and integration tests run automatically in CI and must pass before merging.
 
-Optionally, you can trigger the `/test e2e-incidents-ui` CI job for incident-detection UI tests.
-It is recommended to do so on any change that could influence the frontend behavior.
 
 ## Data simulation
 
