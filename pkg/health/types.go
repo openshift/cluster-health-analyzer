@@ -1,8 +1,8 @@
 package health
 
 import (
-	"github.com/inecas/kube-health/pkg/status"
 	"github.com/prometheus/common/model"
+	"github.com/rhobs/kube-health/pkg/status"
 )
 
 type ComponentsConfig struct {
