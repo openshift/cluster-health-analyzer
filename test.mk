@@ -16,6 +16,7 @@ PROMTOOL := $(GOBIN)/promtool
 
 GINKGO_COLOR := $(if $(CI),--no-color,)
 GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo $(GINKGO_COLOR)
+export GOFLAGS=-mod=readonly
 
 $(YQ):
 	./hack/install-yq.sh
