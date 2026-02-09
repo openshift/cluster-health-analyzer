@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/inecas/kube-health/pkg/eval"
-	"github.com/inecas/kube-health/pkg/khealth"
-	"github.com/inecas/kube-health/pkg/status"
+	"github.com/rhobs/kube-health/pkg/eval"
+	"github.com/rhobs/kube-health/pkg/khealth"
+	"github.com/rhobs/kube-health/pkg/status"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
