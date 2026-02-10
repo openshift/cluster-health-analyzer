@@ -13,6 +13,8 @@ var (
 	srcAlertname = model.LabelName(fmt.Sprintf("%salertname", processor.SrcLabelPrefix))
 	srcNamespace = model.LabelName(fmt.Sprintf("%snamespace", processor.SrcLabelPrefix))
 	srcSeverity  = model.LabelName(fmt.Sprintf("%sseverity", processor.SrcLabelPrefix))
+	resource     = model.LabelName("resource")
+	alertsVal    = model.LabelValue("alerts")
 )
 
 // alertMatcher is a helper to match
@@ -105,6 +107,7 @@ func cleanupLabels(alerts []models.Alert, matchedLabels map[string]string) []mod
 			srcAlertname: model.LabelValue(a.Labels["alertname"]),
 			srcSeverity:  model.LabelValue(a.Labels["severity"]),
 			srcNamespace: model.LabelValue(a.Labels["namespace"]),
+			resource:     alertsVal,
 		}
 		for key, value := range matchedLabels {
 			if key != "alertname" && key != "severity" && key != "namespace" {

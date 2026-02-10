@@ -189,6 +189,7 @@ func TestEvaluateComponentHealth(t *testing.T) {
 								srcAlertname: "BarAlert",
 								srcNamespace: "",
 								"part_of":    "bars",
+								resource:     alertsVal,
 							},
 						},
 					}).
@@ -235,6 +236,7 @@ func TestEvaluateComponentHealth(t *testing.T) {
 								srcAlertname: "FooAlert",
 								srcNamespace: "",
 								"part_of":    "foos",
+								resource:     alertsVal,
 							},
 						},
 					}).
@@ -284,6 +286,7 @@ func TestEvaluateComponentHealth(t *testing.T) {
 								srcAlertname: "FooAlert",
 								srcNamespace: "",
 								"part_of":    "foos",
+								resource:     alertsVal,
 							},
 						},
 					}).
