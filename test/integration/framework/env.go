@@ -3,6 +3,7 @@ package framework
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 // GetEnvInt returns the integer value of an environment variable,
@@ -21,10 +22,10 @@ func GetEnvInt(key string, defaultVal int) int {
 // Accepts "true", "1", "yes" as true values (case-insensitive).
 func GetEnvBool(key string, defaultVal bool) bool {
 	if val := os.Getenv(key); val != "" {
-		switch val {
-		case "true", "TRUE", "True", "1", "yes", "YES", "Yes":
+		switch {
+		case strings.EqualFold(val, "true"), val == "1", strings.EqualFold(val, "yes"):
 			return true
-		case "false", "FALSE", "False", "0", "no", "NO", "No":
+		case strings.EqualFold(val, "false"), val == "0", strings.EqualFold(val, "no"):
 			return false
 		}
 	}
