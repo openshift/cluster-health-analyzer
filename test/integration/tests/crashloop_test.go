@@ -75,7 +75,7 @@ var _ = Describe("KubePodCrashLooping Alert Processing", func() {
 		}, "5m", "30s").Should(BeTrue(), "Alert %s did not fire within timeout", alertName)
 
 		By("Waiting for cluster-health-analyzer to process the alert")
-		var incident framework.Incident
+		var incident *framework.Incident
 		Eventually(func() (bool, error) {
 			incidents, err := promClient.GetIncidents(ctx, alertName, time.Time{})
 			if len(incidents) > 0 {
@@ -86,8 +86,8 @@ var _ = Describe("KubePodCrashLooping Alert Processing", func() {
 
 		By("Verifying the incident has correct labels")
 		Expect(incident).To(framework.BeValidIncident())
-		Expect(map[string]string(incident)).To(HaveKeyWithValue("src_alertname", alertName))
-		Expect(map[string]string(incident)).To(HaveKeyWithValue("src_severity", "warning"))
+		Expect(incident.Labels).To(HaveKeyWithValue("src_alertname", alertName))
+		Expect(incident.Labels).To(HaveKeyWithValue("src_severity", "warning"))
 
 		By(fmt.Sprintf("Test completed - resources %s and %s left for inspection", deploymentName, ruleName))
 	})

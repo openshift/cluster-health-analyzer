@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -23,6 +24,7 @@ func TestIntegration(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	ctx = context.Background()
+	slog.SetDefault(slog.New(slog.NewTextHandler(GinkgoWriter, nil)))
 
 	By("Loading test configuration")
 	cfg = framework.LoadConfig()
@@ -49,6 +51,10 @@ var _ = AfterSuite(func() {
 
 func collectDebugInfo() {
 	if cluster == nil {
+		return
+	}
+
+	if cfg == nil {
 		return
 	}
 
