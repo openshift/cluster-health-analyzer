@@ -11,7 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/stretchr/testify/assert/yaml"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 	"github.com/openshift/cluster-health-analyzer/pkg/health"
