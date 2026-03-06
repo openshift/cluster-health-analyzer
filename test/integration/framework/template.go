@@ -1,3 +1,4 @@
+// Package framework provides utilities for integration testing.
 package framework
 
 import (
@@ -6,18 +7,16 @@ import (
 	"text/template"
 )
 
-// Render handles the core logic of parsing and executing a template.
-// It accepts any data structure (map or struct).
-func Render(name string, templateContent []byte, data any) (string, error) {
-	tmpl, err := template.New(name).Parse(string(templateContent))
+// RenderTemplate executes a Go text/template with the given data and returns the result.
+// The template string should use standard Go template syntax (e.g. {{ .FieldName }}).
+func RenderTemplate(tmplStr string, data any) (string, error) {
+	tmpl, err := template.New("").Parse(tmplStr)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse template %s: %w", name, err)
+		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
-
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template %s: %w", name, err)
+		return "", fmt.Errorf("failed to execute template: %w", err)
 	}
-
 	return buf.String(), nil
 }

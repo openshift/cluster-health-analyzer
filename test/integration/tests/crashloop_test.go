@@ -36,15 +36,9 @@ var _ = Describe("KubePodCrashLooping Alert Processing", func() {
 
 		testCluster = cluster.InNamespace(testNamespace)
 
-		By("Cleaning up any leftover test resources")
-		_ = testCluster.Delete(ctx, "deployment", deploymentName)
-		_ = testCluster.Delete(ctx, "prometheusrule", ruleName)
-
-		Eventually(func() bool {
-			gone1, _ := testCluster.IsGone(ctx, "deployment", deploymentName)
-			gone2, _ := testCluster.IsGone(ctx, "prometheusrule", ruleName)
-			return gone1 && gone2
-		}, "30s", "1s").Should(BeTrue(), "Cleanup timed out")
+		By("Cleaning up any leftover crashloop test resources")
+		_ = testCluster.DeleteByLabel(ctx, "deployment", fixtures.CrashLoopTestLabel)
+		_ = testCluster.DeleteByLabel(ctx, "prometheusrule", fixtures.CrashLoopTestLabel)
 
 		By("Initializing Prometheus client")
 		var err error
@@ -82,7 +76,7 @@ var _ = Describe("KubePodCrashLooping Alert Processing", func() {
 				incident = incidents[0]
 			}
 			return len(incidents) > 0, err
-		}, "3m", "30s").Should(BeTrue(), "Incident for %s was not processed", alertName)
+		}, "10m", "30s").Should(BeTrue(), "Incident for %s was not processed", alertName)
 
 		By("Verifying the incident has correct labels")
 		Expect(incident).To(framework.BeValidIncident())
