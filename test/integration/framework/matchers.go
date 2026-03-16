@@ -77,7 +77,7 @@ type validIncidentMatcher struct {
 	missing  []string
 	empty    []string
 	invalid  []string
-	incident Incident
+	incident *Incident
 }
 
 var requiredIncidentLabels = []string{
@@ -90,9 +90,9 @@ var requiredIncidentLabels = []string{
 }
 
 func (m *validIncidentMatcher) Match(actual interface{}) (bool, error) {
-	incident, ok := actual.(Incident)
+	incident, ok := actual.(*Incident)
 	if !ok {
-		return false, fmt.Errorf("BeValidIncident expects Incident, got %T", actual)
+		return false, fmt.Errorf("BeValidIncident expects *Incident, got %T", actual)
 	}
 
 	if incident == nil {
@@ -105,7 +105,7 @@ func (m *validIncidentMatcher) Match(actual interface{}) (bool, error) {
 	m.invalid = nil
 
 	for _, label := range requiredIncidentLabels {
-		value, exists := incident[label]
+		value, exists := incident.Labels[label]
 		if !exists {
 			m.missing = append(m.missing, label)
 		} else if value == "" {
@@ -114,14 +114,14 @@ func (m *validIncidentMatcher) Match(actual interface{}) (bool, error) {
 	}
 
 	// Validate layer is a known OpenShift layer
-	if layer, exists := incident["layer"]; exists && layer != "" {
+	if layer, exists := incident.Labels["layer"]; exists && layer != "" {
 		if _, ok := ValidLayers[layer]; !ok {
 			m.invalid = append(m.invalid, fmt.Sprintf("layer=%q", layer))
 		}
 	}
 
 	// Validate component is a known OpenShift component
-	if component, exists := incident["component"]; exists && component != "" {
+	if component, exists := incident.Labels["component"]; exists && component != "" {
 		if _, ok := ValidComponents[component]; !ok {
 			m.invalid = append(m.invalid, fmt.Sprintf("component=%q", component))
 		}
@@ -147,19 +147,19 @@ func (m *validIncidentMatcher) FailureMessage(actual interface{}) string {
 		parts = append(parts, fmt.Sprintf("invalid values: %v", m.invalid))
 	}
 
-	alertname := m.incident["src_alertname"]
+	alertname := m.incident.Labels["src_alertname"]
 	if alertname == "" {
 		alertname = "(unknown)"
 	}
 
 	return fmt.Sprintf("Expected incident %s to be valid, but: %s\nAll labels: %v",
-		alertname, strings.Join(parts, "; "), m.incident)
+		alertname, strings.Join(parts, "; "), m.incident.Labels)
 }
 
 func (m *validIncidentMatcher) NegatedFailureMessage(actual interface{}) string {
 	alertname := "(unknown)"
 	if m.incident != nil {
-		if name := m.incident["src_alertname"]; name != "" {
+		if name := m.incident.Labels["src_alertname"]; name != "" {
 			alertname = name
 		}
 	}
