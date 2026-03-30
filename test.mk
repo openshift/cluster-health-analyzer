@@ -11,8 +11,8 @@
 #   4. make undeploy-integration - cleanup
 
 # Tool binaries for integration testing
-YQ := $(GOBIN)/yq
-PROMTOOL := $(GOBIN)/promtool
+YQ := $(or $(shell which yq 2>/dev/null),$(GOBIN)/yq)
+PROMTOOL := $(or $(shell which promtool 2>/dev/null),$(GOBIN)/promtool)
 
 GINKGO_COLOR := $(if $(CI),--no-color,)
 GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo $(GINKGO_COLOR)
@@ -53,7 +53,17 @@ undeploy-integration:
 ## test-integration> run integration tests (assumes deployment exists)
 .PHONY: test-integration
 test-integration:
-	$(GINKGO) -v ./test/integration/...
+	$(GINKGO) -v --label-filter="!stress&&!stress-simulate" ./test/integration/...
+
+# Stress test configuration
+export STRESS_ALERT_COUNT ?= 500
+export STRESS_ALERT_TIMEOUT_MIN ?= 6
+export STRESS_INCIDENT_TIMEOUT_MIN ?= 10
+
+## test-stress-simulate> run stress tests using simulated alerts (STRESS_ALERT_COUNT=100)
+.PHONY: test-stress-simulate
+test-stress-simulate:
+	$(GINKGO) -v --label-filter="stress-simulate" ./test/integration/...
 
 ## help-integration> show integration testing workflow and related targets
 .PHONY: help-integration
@@ -67,6 +77,7 @@ help-integration:
 	@echo '  Run tests:'
 	@echo '    make deploy-integration         - deploy to cluster'
 	@echo '    make test-integration           - run integration tests'
+	@echo '    make test-stress-simulate       - run stress tests with simulated alerts'
 	@echo '    make undeploy-integration       - cleanup deployment'
 	@echo ''
 	@echo '  Environment variables:'
@@ -74,6 +85,9 @@ help-integration:
 	@echo '    MANIFESTS_PATH=$(MANIFESTS_PATH)'
 	@echo '    DEPLOYMENT_NAME=$(DEPLOYMENT_NAME)'
 	@echo '    NAMESPACE=$(NAMESPACE)'
+	@echo '    STRESS_ALERT_COUNT=$(STRESS_ALERT_COUNT)'
+	@echo '    STRESS_ALERT_TIMEOUT_MIN=$(STRESS_ALERT_TIMEOUT_MIN)'
+	@echo '    STRESS_INCIDENT_TIMEOUT_MIN=$(STRESS_INCIDENT_TIMEOUT_MIN)'
 	@echo ''
 	@echo '  To test against COO deployment:'
 	@echo '    eval $$(make env-coo)'

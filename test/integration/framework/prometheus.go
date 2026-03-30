@@ -33,13 +33,15 @@ func NewPrometheusClient(prometheusURL, token string) (*PrometheusClient, error)
 	return &PrometheusClient{loader: loader}, nil
 }
 
-// Alert represents a Prometheus alert as a simple label map.
-type Alert map[string]string
+// Alert represents a Prometheus alert.
+type Alert struct {
+	Labels map[string]string
+}
 
 // GetAlerts returns all firing alerts matching the alertname pattern.
 // Pattern can be exact ("MyAlert") or regex ("MyAlert.*").
 // If queryTime is zero, uses time.Now().
-func (p *PrometheusClient) GetAlerts(ctx context.Context, alertnamePattern string, queryTime time.Time) ([]Alert, error) {
+func (p *PrometheusClient) GetAlerts(ctx context.Context, alertnamePattern string, queryTime time.Time) ([]*Alert, error) {
 	if queryTime.IsZero() {
 		queryTime = time.Now()
 	}
@@ -49,20 +51,22 @@ func (p *PrometheusClient) GetAlerts(ctx context.Context, alertnamePattern strin
 		return nil, fmt.Errorf("failed to query alerts: %w", err)
 	}
 
-	alerts := make([]Alert, 0, len(results))
+	alerts := make([]*Alert, 0, len(results))
 	for _, ls := range results {
-		alerts = append(alerts, Alert(labelSetToMap(ls)))
+		alerts = append(alerts, &Alert{Labels: labelSetToMap(ls)})
 	}
 	return alerts, nil
 }
 
-// Incident represents a processed incident from cluster_health_components_map as a simple label map.
-type Incident map[string]string
+// Incident represents a processed incident from cluster_health_components_map.
+type Incident struct {
+	Labels map[string]string
+}
 
 // GetIncidents returns all incidents matching the alertname pattern.
 // Pattern can be exact ("MyAlert") or regex ("MyAlert.*").
 // If queryTime is zero, uses time.Now().
-func (p *PrometheusClient) GetIncidents(ctx context.Context, alertnamePattern string, queryTime time.Time) ([]Incident, error) {
+func (p *PrometheusClient) GetIncidents(ctx context.Context, alertnamePattern string, queryTime time.Time) ([]*Incident, error) {
 	if queryTime.IsZero() {
 		queryTime = time.Now()
 	}
@@ -72,9 +76,9 @@ func (p *PrometheusClient) GetIncidents(ctx context.Context, alertnamePattern st
 		return nil, fmt.Errorf("failed to query incidents: %w", err)
 	}
 
-	incidents := make([]Incident, 0, len(results))
+	incidents := make([]*Incident, 0, len(results))
 	for _, ls := range results {
-		incidents = append(incidents, Incident(labelSetToMap(ls)))
+		incidents = append(incidents, &Incident{Labels: labelSetToMap(ls)})
 	}
 	return incidents, nil
 }
