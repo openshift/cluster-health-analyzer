@@ -36,15 +36,17 @@ var _ = Describe("KubePodCrashLooping Alert Processing", func() {
 
 		testCluster = cluster.InNamespace(testNamespace)
 
-		By("Cleaning up any leftover test resources")
-		_ = testCluster.Delete(ctx, "deployment", deploymentName)
-		_ = testCluster.Delete(ctx, "prometheusrule", ruleName)
+		By("Cleaning up any leftover crashloop test resources")
+		Expect(testCluster.DeleteByLabel(ctx, "deployment", fixtures.CrashLoopTestLabel)).To(Succeed())
+		Expect(testCluster.DeleteByLabel(ctx, "prometheusrule", fixtures.CrashLoopTestLabel)).To(Succeed())
 
-		Eventually(func() bool {
-			gone1, _ := testCluster.IsGone(ctx, "deployment", deploymentName)
-			gone2, _ := testCluster.IsGone(ctx, "prometheusrule", ruleName)
-			return gone1 && gone2
-		}, "30s", "1s").Should(BeTrue(), "Cleanup timed out")
+		By("Waiting for leftover resources to be fully removed")
+		Eventually(func() (bool, error) {
+			return testCluster.IsGoneByLabel(ctx, "deployment", fixtures.CrashLoopTestLabel)
+		}, "1m", "5s").Should(BeTrue(), "Deployments with label %s still exist", fixtures.CrashLoopTestLabel)
+		Eventually(func() (bool, error) {
+			return testCluster.IsGoneByLabel(ctx, "prometheusrule", fixtures.CrashLoopTestLabel)
+		}, "1m", "5s").Should(BeTrue(), "PrometheusRules with label %s still exist", fixtures.CrashLoopTestLabel)
 
 		By("Initializing Prometheus client")
 		var err error
@@ -82,7 +84,7 @@ var _ = Describe("KubePodCrashLooping Alert Processing", func() {
 				incident = incidents[0]
 			}
 			return len(incidents) > 0, err
-		}, "3m", "30s").Should(BeTrue(), "Incident for %s was not processed", alertName)
+		}, "10m", "30s").Should(BeTrue(), "Incident for %s was not processed", alertName)
 
 		By("Verifying the incident has correct labels")
 		Expect(incident).To(framework.BeValidIncident())

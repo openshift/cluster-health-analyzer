@@ -41,6 +41,17 @@ func (c *Cluster) DeleteByLabel(ctx context.Context, resourceType, labelSelector
 	return c.run(ctx, "delete", resourceType, "-l", labelSelector, "--ignore-not-found")
 }
 
+// IsGoneByLabel checks if all resources matching the label selector have been deleted.
+// Use this with Eventually to wait for label-based deletion to complete.
+func (c *Cluster) IsGoneByLabel(ctx context.Context, resourceType, labelSelector string) (bool, error) {
+	output, err := c.output(ctx, "get", resourceType, "-l", labelSelector,
+		"-o", "jsonpath={.items[*].metadata.name}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) == "", nil
+}
+
 // IsGone checks if a resource no longer exists.
 // Use this with Eventually to wait for deletion to complete.
 func (c *Cluster) IsGone(ctx context.Context, resourceType, name string) (bool, error) {
