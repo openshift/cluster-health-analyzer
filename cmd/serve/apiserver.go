@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -101,17 +102,50 @@ func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 
 	// We will be serving out own `/metrics` endpoint.
 	serverConfig.EnableMetrics = false
-	// use only the secured cipher suites
-	serverConfig.SecureServing.CipherSuites = getCipherSuites()
+
+	minVersion, err := tlsVersion(o.TLSMinVersion)
+	if err != nil {
+		return nil, err
+	}
+	serverConfig.SecureServing.MinTLSVersion = minVersion
+
+	if len(o.TLSCipherSuites) > 0 {
+		cipherSuites, err := tlsCipherSuites(o.TLSCipherSuites)
+		if err != nil {
+			return nil, err
+		}
+		serverConfig.SecureServing.CipherSuites = cipherSuites
+	}
 
 	return serverConfig, nil
 }
 
-func getCipherSuites() []uint16 {
-	secureCiphers := tls.CipherSuites()
-	cipherSuites := make([]uint16, len(secureCiphers))
-	for i, cipher := range secureCiphers {
-		cipherSuites[i] = cipher.ID
+func tlsVersion(version string) (uint16, error) {
+	switch version {
+	case "":
+		return tls.VersionTLS12, nil
+	case "VersionTLS12":
+		return tls.VersionTLS12, nil
+	case "VersionTLS13":
+		return tls.VersionTLS13, nil
+	default:
+		return 0, fmt.Errorf("unsupported TLS version %q, must be one of: VersionTLS12, VersionTLS13", version)
 	}
-	return cipherSuites
+}
+
+func tlsCipherSuites(names []string) ([]uint16, error) {
+	ciphersByName := map[string]uint16{}
+	for _, c := range tls.CipherSuites() {
+		ciphersByName[c.Name] = c.ID
+	}
+
+	suites := make([]uint16, 0, len(names))
+	for _, name := range names {
+		id, ok := ciphersByName[name]
+		if !ok {
+			return nil, fmt.Errorf("unsupported cipher suite %q", name)
+		}
+		suites = append(suites, id)
+	}
+	return suites, nil
 }

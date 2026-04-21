@@ -15,6 +15,9 @@ type Options struct {
 	CertFile string
 	CertKey  string
 
+	TLSMinVersion  string
+	TLSCipherSuites []string
+
 	// Only to be used to for testing.
 	DisableAuthForTesting bool
 
@@ -42,6 +45,10 @@ func (o *Options) Flags() *pflag.FlagSet {
 
 	fs.StringVar(&o.CertFile, "tls-cert-file", "", "The path to the server certificate")
 	fs.StringVar(&o.CertKey, "tls-private-key-file", "", "The path to the server key")
+	fs.StringVar(&o.TLSMinVersion, "tls-min-version", "VersionTLS12",
+		"Minimum TLS version supported. Value must be one of: VersionTLS12, VersionTLS13")
+	fs.StringSliceVar(&o.TLSCipherSuites, "tls-cipher-suites", nil,
+		"Comma-separated list of cipher suites for the server. If omitted, the default secure cipher suites will be used")
 
 	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
 		"Flag for testing purposes to disable auth")
