@@ -109,17 +109,21 @@ func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 	}
 	serverConfig.SecureServing.MinTLSVersion = minVersion
 
-	cipherSuites, err := tlsCipherSuites(o.TLSCipherSuites)
-	if err != nil {
-		return nil, err
+	if len(o.TLSCipherSuites) > 0 {
+		cipherSuites, err := tlsCipherSuites(o.TLSCipherSuites)
+		if err != nil {
+			return nil, err
+		}
+		serverConfig.SecureServing.CipherSuites = cipherSuites
 	}
-	serverConfig.SecureServing.CipherSuites = cipherSuites
 
 	return serverConfig, nil
 }
 
 func tlsVersion(version string) (uint16, error) {
 	switch version {
+	case "":
+		return tls.VersionTLS12, nil
 	case "VersionTLS12":
 		return tls.VersionTLS12, nil
 	case "VersionTLS13":
@@ -130,15 +134,6 @@ func tlsVersion(version string) (uint16, error) {
 }
 
 func tlsCipherSuites(names []string) ([]uint16, error) {
-	if len(names) == 0 {
-		secureCiphers := tls.CipherSuites()
-		suites := make([]uint16, len(secureCiphers))
-		for i, c := range secureCiphers {
-			suites[i] = c.ID
-		}
-		return suites, nil
-	}
-
 	ciphersByName := map[string]uint16{}
 	for _, c := range tls.CipherSuites() {
 		ciphersByName[c.Name] = c.ID
