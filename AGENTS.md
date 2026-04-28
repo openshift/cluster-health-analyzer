@@ -167,3 +167,4 @@ For development without a live cluster:
 - Import groups: stdlib, external dependencies, current project
 - Use golangci-lint rules defined in project configuration
 - Keep functions focused and testable
+
