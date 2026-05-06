@@ -2,11 +2,18 @@
 package framework
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // Cluster provides an interface for interacting with a Kubernetes/OpenShift cluster.
@@ -106,6 +113,28 @@ func (c *Cluster) HasUnavailableReplicas(ctx context.Context, name string) (bool
 	return trimmed != "" && trimmed != "0", nil
 }
 
+// AllReplicasUpdated checks whether all replicas have been updated to the latest pod template.
+func (c *Cluster) AllReplicasUpdated(ctx context.Context, name string) (bool, error) {
+	output, err := c.output(ctx, "get", "deployment", name,
+		"-o", "jsonpath={.spec.replicas} {.status.updatedReplicas}")
+	if err != nil {
+		return false, err
+	}
+	parts := strings.Fields(output)
+	if len(parts) != 2 {
+		return false, nil
+	}
+	desired, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false, fmt.Errorf("failed to parse spec.replicas: %w", err)
+	}
+	updated, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false, fmt.Errorf("failed to parse status.updatedReplicas: %w", err)
+	}
+	return updated == desired, nil
+}
+
 // --- Pod Status (by label selector) ---
 
 // HasPods checks if any pods exist matching the selector.
@@ -171,6 +200,139 @@ func (c *Cluster) GetPodStatus(ctx context.Context, selector string) (string, er
 // GetLogs retrieves logs from a resource (e.g., "deployment/my-app").
 func (c *Cluster) GetLogs(ctx context.Context, resourceRef string, tailLines int) (string, error) {
 	return c.output(ctx, "logs", resourceRef, fmt.Sprintf("--tail=%d", tailLines))
+}
+
+// --- Deployment Management ---
+
+// GetDeploymentArgs returns the args of the container at containerIndex in the deployment.
+func (c *Cluster) GetDeploymentArgs(ctx context.Context, deploymentName string, containerIndex int) ([]string, error) {
+	output, err := c.output(ctx, "get", "deployment", deploymentName,
+		"-o", fmt.Sprintf("jsonpath={.spec.template.spec.containers[%d].args}", containerIndex))
+	if err != nil {
+		return nil, err
+	}
+	var args []string
+	if err := json.Unmarshal([]byte(output), &args); err != nil {
+		return nil, fmt.Errorf("failed to parse deployment args: %w", err)
+	}
+	return args, nil
+}
+
+// SetDeploymentArgs replaces the args of the container at containerIndex in the deployment.
+func (c *Cluster) SetDeploymentArgs(ctx context.Context, deploymentName string, containerIndex int, args []string) error {
+	if args == nil {
+		args = []string{}
+	}
+	patch, err := json.Marshal(args)
+	if err != nil {
+		return err
+	}
+	patchJSON := fmt.Sprintf(`[{"op":"add","path":"/spec/template/spec/containers/%d/args","value":%s}]`,
+		containerIndex, patch)
+	return c.run(ctx, "patch", "deployment", deploymentName, "--type=json", "-p", patchJSON)
+}
+
+// WaitForRollout waits for the deployment to finish rolling out.
+// It fails fast if any pod enters CrashLoopBackOff rather than waiting for the full timeout.
+func (c *Cluster) WaitForRollout(ctx context.Context, deploymentName string) error {
+	const (
+		timeout      = 120 * time.Second
+		pollInterval = 5 * time.Second
+	)
+
+	selector, err := c.GetSelector(ctx, "deployment", deploymentName)
+	if err != nil {
+		return err
+	}
+
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true,
+		func(ctx context.Context) (bool, error) {
+			crashing, err := c.IsPodCrashLooping(ctx, selector)
+			if err != nil {
+				return false, err
+			}
+			if crashing {
+				return false, fmt.Errorf("rollout of %s failed: pod entered CrashLoopBackOff", deploymentName)
+			}
+
+			available, err := c.IsDeploymentAvailable(ctx, deploymentName)
+			if err != nil {
+				return false, err
+			}
+			hasUnavailable, err := c.HasUnavailableReplicas(ctx, deploymentName)
+			if err != nil {
+				return false, err
+			}
+			allUpdated, err := c.AllReplicasUpdated(ctx, deploymentName)
+			if err != nil {
+				return false, err
+			}
+			return available && !hasUnavailable && allUpdated, nil
+		})
+	if err != nil {
+		return fmt.Errorf("rollout of %s: %w", deploymentName, err)
+	}
+	return nil
+}
+
+// --- Port Forwarding ---
+
+var portForwardRe = regexp.MustCompile(`Forwarding from 127\.0\.0\.1:(\d+)`)
+
+// PortForward starts a port-forward to the given resource (e.g. "svc/my-service")
+// and remote port. It returns the local port assigned by the OS and a cancel
+// function that stops the port-forward. The caller must call cancel when done.
+func (c *Cluster) PortForward(ctx context.Context, resourceRef string, remotePort int) (localPort int, cancel func(), err error) {
+	const startupTimeout = 30 * time.Second
+
+	args := c.addNamespace([]string{"port-forward", resourceRef, fmt.Sprintf("0:%d", remotePort)})
+	startupCtx, startupCancel := context.WithTimeout(ctx, startupTimeout)
+	defer startupCancel()
+
+	cmd := exec.Command("oc", args...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return 0, nil, err
+	}
+
+	cancel = func() { _ = cmd.Process.Kill() }
+
+	type scanResult struct {
+		port int
+		err  error
+	}
+	ch := make(chan scanResult, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			if matches := portForwardRe.FindStringSubmatch(scanner.Text()); matches != nil {
+				port, parseErr := strconv.Atoi(matches[1])
+				if parseErr != nil {
+					ch <- scanResult{err: fmt.Errorf("failed to parse port from port-forward output: %w", parseErr)}
+					return
+				}
+				ch <- scanResult{port: port}
+				return
+			}
+		}
+		ch <- scanResult{err: fmt.Errorf("port-forward to %s:%d did not output expected forwarding line", resourceRef, remotePort)}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			cancel()
+			return 0, nil, res.err
+		}
+		return res.port, cancel, nil
+	case <-startupCtx.Done():
+		cancel()
+		return 0, nil, fmt.Errorf("port-forward to %s:%d timed out after %s waiting for forwarding line", resourceRef, remotePort, startupTimeout)
+	}
 }
 
 // --- Internal helpers ---
