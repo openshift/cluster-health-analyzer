@@ -136,4 +136,4 @@ Once complete, the data will appear in the target cluster.
 
 ## Project Documentation
 
-See [docs/agents/](docs/agents/) for detailed architecture and subsystem documentation.
+See [docs/](docs/) for detailed architecture and subsystem documentation.

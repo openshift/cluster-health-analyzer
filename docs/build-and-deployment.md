@@ -4,10 +4,10 @@
 
 ## Key Entry Points
 
-- [Makefile](../../Makefile): primary build orchestration — `build`, `test`, `lint`, `run`, `deploy`, `precommit`
-- [test.mk](../../test.mk): integration test targets (included by Makefile) — `test-integration`, `test-stress-simulate`, `deploy-integration`
-- [Dockerfile](../../Dockerfile): multi-stage build for upstream/development images
-- [Dockerfile.konflux](../../Dockerfile.konflux): multi-stage build for Red Hat Konflux CI pipeline (uses `brew.registry.redhat.io` builder)
+- [Makefile](../Makefile): primary build orchestration — `build`, `test`, `lint`, `run`, `deploy`, `precommit`
+- [test.mk](../test.mk): integration test targets (included by Makefile) — `test-integration`, `test-stress-simulate`, `deploy-integration`
+- [Dockerfile](../Dockerfile): multi-stage build for upstream/development images
+- [Dockerfile.konflux](../Dockerfile.konflux): multi-stage build for Red Hat Konflux CI pipeline (uses `brew.registry.redhat.io` builder)
 - `manifests/backend/`: numbered YAML manifests for the main analyzer deployment (01-07)
 - `manifests/mcp/`: YAML manifests for the MCP server deployment
 - `hack/listen-thanos.sh`: port-forward to thanos-querier pod on port 9090
@@ -80,6 +80,6 @@ MCP manifests (`manifests/mcp/`) deploy a separate pod in `openshift-cluster-obs
 
 - [testing-infrastructure.md](testing-infrastructure.md) — integration test commands and test.mk details
 - [server-and-integrations.md](server-and-integrations.md) — server runtime, TLS handling, Prometheus/Alertmanager integration
-- [manifests/backend/](../../manifests/backend/) — backend deployment manifests
-- [manifests/mcp/](../../manifests/mcp/) — MCP server deployment manifests
-- [hack/](../../hack/) — development helper scripts
+- [manifests/backend/](../manifests/backend/) — backend deployment manifests
+- [manifests/mcp/](../manifests/mcp/) — MCP server deployment manifests
+- [hack/](../hack/) — development helper scripts

@@ -80,7 +80,7 @@ Source labels on exported metrics are prefixed with `src_` (e.g., `src_alertname
 
 - **`rhobs/kube-health`**: external library for evaluating Kubernetes object health status. Wraps the API server to check conditions on nodes, operators, and custom resources
 - **`prometheus/common/model`**: `LabelSet` is the universal alert/metric representation — all matching, mapping, and grouping operates on label sets
-- **`prometheus/alertmanager`**: `api/v2/models.Alert` type used for silence evaluation. The loader queries Alertmanager's API for active and silenced alerts
+- **`prometheus/alertmanager`**: `a../models.Alert` type used for silence evaluation. The loader queries Alertmanager's API for active and silenced alerts
 - **`google/uuid`**: generates unique group IDs for incidents
 - **Three-layer component model**: compute (node-level), core (OpenShift platform operators), workload (optional add-ons). This is hardcoded in the matcher structure and reflected in metric labels
 - **Two processing pipelines**: the `processor` runs PromQL queries against Thanos for alert-based mapping; the `healthProcessor` queries Alertmanager and Kubernetes API for component-tree evaluation. Both expose their results as Prometheus MetricSets
@@ -90,6 +90,6 @@ Source labels on exported metrics are prefixed with `src_` (e.g., `src_alertname
 - [server-and-integrations.md](server-and-integrations.md) — HTTP server, Prometheus metrics exposition, Thanos/Alertmanager integration
 - [testing-infrastructure.md](testing-infrastructure.md) — unit test mocks for Loader interfaces, simulation engine
 - [build-and-deployment.md](build-and-deployment.md) — components-config ConfigMap (manifests/backend/03_configmap.yaml) that configures the health processor
-- [pkg/processor/mappings.go](../../pkg/processor/mappings.go) — definitive list of component matchers
-- [pkg/processor/incidents.go](../../pkg/processor/incidents.go) — incident grouping algorithm
-- [pkg/health/health_processor.go](../../pkg/health/health_processor.go) — component health evaluation
+- [pkg/processor/mappings.go](../pkg/processor/mappings.go) — definitive list of component matchers
+- [pkg/processor/incidents.go](../pkg/processor/incidents.go) — incident grouping algorithm
+- [pkg/health/health_processor.go](../pkg/health/health_processor.go) — component health evaluation

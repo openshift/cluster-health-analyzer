@@ -39,4 +39,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and contr
 
 ## Documentation
 
-See [docs/agents/](docs/agents/) for detailed architecture and subsystem documentation.
+See [docs/](docs/) for detailed architecture and subsystem documentation.

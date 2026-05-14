@@ -99,7 +99,7 @@ Default options are populated from environment variables: `REFRESH_INTERVAL` (de
 - [health-analysis-engine.md](health-analysis-engine.md) — the analysis logic that produces metrics exposed here
 - [build-and-deployment.md](build-and-deployment.md) — deployment manifests (TLS certs, env vars, ServiceMonitor)
 - [testing-infrastructure.md](testing-infrastructure.md) — MockGen mocks for `prom.Loader` and `alertmanager.Loader`
-- [pkg/server/server.go](../../pkg/server/server.go) — server startup orchestration
-- [cmd/serve/apiserver.go](../../cmd/serve/apiserver.go) — GenericAPIServer wrapper and TLS config
-- [pkg/prom/loader.go](../../pkg/prom/loader.go) — Thanos query interface
-- [pkg/alertmanager/loader.go](../../pkg/alertmanager/loader.go) — Alertmanager API client
+- [pkg/server/server.go](../pkg/server/server.go) — server startup orchestration
+- [cmd/serve/apiserver.go](../cmd/serve/apiserver.go) — GenericAPIServer wrapper and TLS config
+- [pkg/prom/loader.go](../pkg/prom/loader.go) — Thanos query interface
+- [pkg/alertmanager/loader.go](../pkg/alertmanager/loader.go) — Alertmanager API client

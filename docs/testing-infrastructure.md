@@ -4,9 +4,9 @@
 
 ## Key Entry Points
 
-- `make test` / `make test-verbose`: run unit tests (excludes `test/integration/`); defined in [Makefile](../../Makefile)
-- `make test-integration`: run integration tests via Ginkgo against a live cluster; defined in [test.mk](../../test.mk)
-- `make test-stress-simulate`: run stress tests with simulated alert injection; defined in [test.mk](../../test.mk)
+- `make test` / `make test-verbose`: run unit tests (excludes `test/integration/`); defined in [Makefile](../Makefile)
+- `make test-integration`: run integration tests via Ginkgo against a live cluster; defined in [test.mk](../test.mk)
+- `make test-stress-simulate`: run stress tests with simulated alert injection; defined in [test.mk](../test.mk)
 - `cmd/simulate/simulate.go`: CLI entry point for the `simulate` subcommand — generates OpenMetrics `.txt` files from CSV scenarios
 - `pkg/simulate/simulate.go`: `Simulate()` function — core simulation logic that converts `RelativeInterval` definitions to OpenMetrics output
 - `pkg/simulate/intervals.go`: CSV parsing and default alert scenario definitions
@@ -86,6 +86,6 @@ The simulation adds a 10-minute `endTimeBuffer` to alert end times to prevent Pr
 
 - [health-analysis-engine.md](health-analysis-engine.md) — the core analysis logic that tests verify
 - [build-and-deployment.md](build-and-deployment.md) — build commands including `make test`, `make deploy-integration`
-- [test/integration/README.md](../../test/integration/README.md) — integration test usage guide
-- [CONTRIBUTING.md](../../CONTRIBUTING.md) — CSV format details for simulation scenarios
-- [testdata/input.csv](../../testdata/input.csv) — default simulation scenario
+- [test/integration/README.md](../test/integration/README.md) — integration test usage guide
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — CSV format details for simulation scenarios
+- [testdata/input.csv](../testdata/input.csv) — default simulation scenario
