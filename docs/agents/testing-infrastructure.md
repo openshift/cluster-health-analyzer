@@ -87,5 +87,5 @@ The simulation adds a 10-minute `endTimeBuffer` to alert end times to prevent Pr
 - [health-analysis-engine.md](health-analysis-engine.md) — the core analysis logic that tests verify
 - [build-and-deployment.md](build-and-deployment.md) — build commands including `make test`, `make deploy-integration`
 - [test/integration/README.md](../../test/integration/README.md) — integration test usage guide
-- [development.md](../../development.md) — CSV format details for simulation scenarios
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) — CSV format details for simulation scenarios
 - [testdata/input.csv](../../testdata/input.csv) — default simulation scenario
