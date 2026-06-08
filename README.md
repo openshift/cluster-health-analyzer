@@ -26,10 +26,14 @@ oc apply -f manifests/backend
 
 ## Usage
 
-The Cluster Health Analyzer is a backend that exposes results via two Prometheus metrics:
+The Cluster Health Analyzer is a backend that exposes results as Prometheus metrics:
 
 - `cluster_health_components_map` — maps source signals (alerts) to components and incident groups
 - `cluster_health_components` — metadata and ranking of components in the system
+- `cluster:health:group_severity:count` — current counts of group IDs by severity
+- `component_health_alert` — health status of a component based on alerts
+- `component_health_object` — health status of a component based on Kubernetes objects
+- `component_health` — health status of a component based on the child objects
 
 See the metrics at `/metrics` on the running service.
 

@@ -103,14 +103,15 @@ The CSV file defines the alerts to be generated and has the following format:
 | alertname  | Alert name (e.g. `KubePodCrashLooping`) |
 | namespace  | Alert namespace (e.g. `openshift-monitoring`) |
 | severity   | Alert severity (e.g. `warning`, `critical`) |
+| silenced   | Whether the alert is silenced (`true` or `false`) |
 | labels     | Optional JSON object with additional alert labels, in the form of `{"key":"value"}` (e.g. `{"component":"node-exporter"}`) |
 
 Example:
 
 ```
-start,end,alertname,namespace,severity,labels
-0,60,Watchdog,openshift-monitoring,warning,
-10,40,ClusterOperatorDegraded,openshift-cluster-version,warning,{"name": "machine-config"}
+start,end,alertname,namespace,severity,silenced,labels
+0,60,Watchdog,openshift-monitoring,warning,false,
+10,40,ClusterOperatorDegraded,openshift-cluster-version,warning,false,{"name": "machine-config"}
 ```
 
 If the CSV file is not provided, the script will generate a default set of alerts (see `simulate.go`).

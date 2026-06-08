@@ -16,7 +16,7 @@ make undeploy-integration
 ## Requirements
 
 - OpenShift cluster access (`oc login` required)
-- Go 1.22+
+- Go 1.25+
 - Permissions to create resources in `openshift-monitoring` namespace
 - PrometheusRule CRD available (standard OpenShift installation)
 
