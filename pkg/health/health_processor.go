@@ -155,7 +155,26 @@ func createHealthMetrics(componentHealth []*ComponentHealth) ([]prom.Metric, []p
 		objectMetrics = append(objectMetrics, oMetrics...)
 		componentMetrics = append(componentMetrics, cMetrics...)
 	}
-	return alertMetrics, objectMetrics, componentMetrics
+	return dedupMetrics(alertMetrics), dedupMetrics(objectMetrics), dedupMetrics(componentMetrics)
+}
+
+// dedupMetrics removes duplicate metrics that share the same label set.
+// For duplicates, the metric with the highest value (worst severity) is kept.
+func dedupMetrics(metrics []prom.Metric) []prom.Metric {
+	seen := make(map[model.Fingerprint]int, len(metrics))
+	deduped := make([]prom.Metric, 0, len(metrics))
+	for _, m := range metrics {
+		fp := m.Labels.Fingerprint()
+		if idx, ok := seen[fp]; ok {
+			if m.Value > deduped[idx].Value {
+				deduped[idx].Value = m.Value
+			}
+		} else {
+			seen[fp] = len(deduped)
+			deduped = append(deduped, m)
+		}
+	}
+	return deduped
 }
 
 // componentHealthMetrics creates list of alert, object and component metrics
