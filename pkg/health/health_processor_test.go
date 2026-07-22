@@ -476,6 +476,42 @@ func TestComponentHealthsToMetrics(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "duplicate alerts with identical labels are deduplicated",
+			componentsHealth: []*ComponentHealth{
+				{
+					name:         "kubevirt",
+					healthStatus: Warning,
+					alerts: []model.LabelSet{
+						{
+							srcAlertname: "VMCannotBeEvicted",
+							srcSeverity:  "warning",
+							srcNamespace: "test-ns",
+							resource:     alertsVal,
+						},
+						{
+							srcAlertname: "VMCannotBeEvicted",
+							srcSeverity:  "warning",
+							srcNamespace: "test-ns",
+							resource:     alertsVal,
+						},
+					},
+				},
+			},
+			expectedAlertMetrics: []prom.Metric{
+				{
+					Labels: model.LabelSet{
+						"component":  "kubevirt",
+						srcAlertname: "VMCannotBeEvicted",
+						srcSeverity:  "warning",
+						srcNamespace: "test-ns",
+						resource:     alertsVal,
+						"status":     "warning",
+					},
+					Value: 1,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -484,6 +520,72 @@ func TestComponentHealthsToMetrics(t *testing.T) {
 			assert.ElementsMatch(t, tt.expectedAlertMetrics, alertMetrics)
 			assert.ElementsMatch(t, tt.expectedComponentMetrics, componentMetrics)
 			assert.ElementsMatch(t, tt.expectedObjectMetrics, objectMetrics)
+		})
+	}
+}
+
+func TestDedupMetrics(t *testing.T) {
+	labels := model.LabelSet{
+		"component":  "kubevirt",
+		srcAlertname: "VMCannotBeEvicted",
+		srcSeverity:  "warning",
+		srcNamespace: "test-ns",
+		resource:     alertsVal,
+		"status":     "warning",
+	}
+
+	tests := []struct {
+		name     string
+		input    []prom.Metric
+		expected []prom.Metric
+	}{
+		{
+			name: "duplicates with same value are collapsed",
+			input: []prom.Metric{
+				{Labels: labels, Value: 1},
+				{Labels: labels, Value: 1},
+			},
+			expected: []prom.Metric{
+				{Labels: labels, Value: 1},
+			},
+		},
+		{
+			name: "duplicates keep highest value",
+			input: []prom.Metric{
+				{Labels: labels, Value: 1},
+				{Labels: labels, Value: 2},
+			},
+			expected: []prom.Metric{
+				{Labels: labels, Value: 2},
+			},
+		},
+		{
+			name: "duplicates keep highest value regardless of order",
+			input: []prom.Metric{
+				{Labels: labels, Value: 2},
+				{Labels: labels, Value: 1},
+			},
+			expected: []prom.Metric{
+				{Labels: labels, Value: 2},
+			},
+		},
+		{
+			name: "distinct metrics are preserved",
+			input: []prom.Metric{
+				{Labels: model.LabelSet{"component": "a"}, Value: 1},
+				{Labels: model.LabelSet{"component": "b"}, Value: 1},
+			},
+			expected: []prom.Metric{
+				{Labels: model.LabelSet{"component": "a"}, Value: 1},
+				{Labels: model.LabelSet{"component": "b"}, Value: 1},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := dedupMetrics(tt.input)
+			assert.ElementsMatch(t, tt.expected, result)
 		})
 	}
 }
