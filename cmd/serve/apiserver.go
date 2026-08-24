@@ -91,7 +91,7 @@ func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 		kubeClient,
 		nil,   // disable leader election
 		false, // disable http2
-		true,  // skip in-cluster auth lookup
+		false, // skip in-cluster auth lookup
 		nil,
 	)
 	if err != nil {
