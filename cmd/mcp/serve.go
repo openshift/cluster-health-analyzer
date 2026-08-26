@@ -17,6 +17,8 @@ var (
 var (
 	promURL         string
 	alertManagerURL string
+	tlsCertFile     string
+	tlsKeyFile      string
 )
 
 var (
@@ -47,6 +49,8 @@ var (
 				Url:             ":8085",
 				PrometheusURL:   promURL,
 				AlertManagerURL: alertManagerURL,
+				TLSCertFile:     tlsCertFile,
+				TLSKeyFile:      tlsKeyFile,
 			}
 
 			server := mcp.NewMCPHealthServer(serverCfg)
@@ -63,4 +67,6 @@ var (
 func init() {
 	MCPCmd.Flags().StringVarP(&promURL, "prom-url", "u", "", "URL of the Prometheus server")
 	MCPCmd.Flags().StringVar(&alertManagerURL, "alertmanager-url", "", "URL of the AlertManager server")
+	MCPCmd.Flags().StringVar(&tlsCertFile, "tls-cert-file", "", "Path to the TLS certificate file")
+	MCPCmd.Flags().StringVar(&tlsKeyFile, "tls-private-key-file", "", "Path to the TLS private key file")
 }

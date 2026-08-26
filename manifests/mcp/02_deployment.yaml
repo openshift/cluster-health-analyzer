@@ -18,12 +18,22 @@ spec:
     spec:
       serviceAccountName: cluster-health-analyzer-mcp-thanos-querier
       automountServiceAccountToken: true
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: cluster-health-analyzer-mcp-tls
       containers:
       - name: cluster-health-mcp-server
-        image: "quay.io/openshiftanalytics/cluster-health-analyzer:mcp-dev-preview"
+        image: "quay.io/rh-ee-criolo/cluster-health-analyzer:mcp-tls"
+        volumeMounts:
+          - name: tls-certs
+            mountPath: /etc/tls/private
+            readOnly: true
         imagePullPolicy: Always
         args:
           - mcp
+          - --tls-cert-file=/etc/tls/private/tls.crt
+          - --tls-private-key-file=/etc/tls/private/tls.key
         env:
           - name: PROM_URL
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
