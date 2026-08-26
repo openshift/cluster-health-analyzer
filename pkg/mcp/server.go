@@ -104,12 +104,10 @@ func (m *MCPHealthServer) Start() error {
 			if m.tokenReviewer != nil {
 				token, err := getTokenFromCtx(authCtx)
 				if err != nil {
-					slog.Error("Missing authentication token", "error", err)
 					http.Error(w, "Unauthorized", http.StatusUnauthorized)
 					return
 				}
 				if err := m.tokenReviewer.ValidateToken(r.Context(), token); err != nil {
-					slog.Error("Token validation failed", "error", err)
 					http.Error(w, "Unauthorized", http.StatusUnauthorized)
 					return
 				}
@@ -121,6 +119,10 @@ func (m *MCPHealthServer) Start() error {
 	}
 
 	handlerWithAuthCtx := mdw(handler)
+
+	if (m.tlsCertFile == "") != (m.tlsKeyFile == "") {
+		return errors.New("both TLS certificate and private key files must be configured")
+	}
 
 	if m.tlsCertFile != "" && m.tlsKeyFile != "" {
 		slog.Info("TLS enabled for MCP server")

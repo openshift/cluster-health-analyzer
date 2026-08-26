@@ -11,7 +11,7 @@ import (
 )
 
 func TestValidateToken_Authenticated(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	client.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		review := action.(k8stesting.CreateAction).GetObject().(*authenticationv1.TokenReview)
 		review.Status = authenticationv1.TokenReviewStatus{
@@ -30,7 +30,7 @@ func TestValidateToken_Authenticated(t *testing.T) {
 }
 
 func TestValidateToken_Unauthenticated(t *testing.T) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	client.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		review := action.(k8stesting.CreateAction).GetObject().(*authenticationv1.TokenReview)
 		review.Status = authenticationv1.TokenReviewStatus{

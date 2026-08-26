@@ -22,6 +22,8 @@ spec:
         - name: tls-certs
           secret:
             secretName: cluster-health-analyzer-mcp-tls
+        - name: tmp
+          emptyDir: {}
       containers:
       - name: cluster-health-mcp-server
         image: "quay.io/openshiftanalytics/cluster-health-analyzer:mcp-dev-preview"
@@ -29,6 +31,8 @@ spec:
           - name: tls-certs
             mountPath: /etc/tls/private
             readOnly: true
+          - name: tmp
+            mountPath: /tmp
         imagePullPolicy: Always
         args:
           - mcp
@@ -39,8 +43,16 @@ spec:
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
           - name: ALERTMANAGER_URL
             value: "https://alertmanager-main.openshift-monitoring.svc.cluster.local:9094"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         securityContext:
           runAsNonRoot: true
+          readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
