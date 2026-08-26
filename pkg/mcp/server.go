@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -18,8 +19,10 @@ const authHeaderStr authHeader = "kubernetes-authorization"
 // providing basic methods to run the underlying SSE server
 // and to register tools
 type MCPHealthServer struct {
-	server *mcp.Server
-	addr   string
+	server      *mcp.Server
+	addr        string
+	tlsCertFile string
+	tlsKeyFile  string
 }
 
 type MCPHealthServerCfg struct {
@@ -29,6 +32,9 @@ type MCPHealthServerCfg struct {
 
 	PrometheusURL   string
 	AlertManagerURL string
+
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 // NewMCPHealthServer returns an instance of the MCPHealthServer
@@ -45,8 +51,10 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
 	mcp.AddTool(server, &incTool.Tool, mcp.ToolHandlerFor[GetIncidentsParams, any](incTool.IncidentsHandler))
 
 	return &MCPHealthServer{
-		server: server,
-		addr:   cfg.Url,
+		server:      server,
+		addr:        cfg.Url,
+		tlsCertFile: cfg.TLSCertFile,
+		tlsKeyFile:  cfg.TLSKeyFile,
 	}
 }
 
@@ -72,6 +80,20 @@ func (m *MCPHealthServer) Start() error {
 	}
 
 	handlerWithAuthCtx := mdw(handler)
+
+	if m.tlsCertFile != "" && m.tlsKeyFile != "" {
+		slog.Info("TLS enabled for MCP server")
+		tlsServer := &http.Server{
+			Addr:    m.addr,
+			Handler: handlerWithAuthCtx,
+			TLSConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			},
+		}
+		return tlsServer.ListenAndServeTLS(m.tlsCertFile, m.tlsKeyFile)
+	}
+
+	slog.Warn("TLS is not configured, serving over plaintext HTTP")
 	return http.ListenAndServe(m.addr, handlerWithAuthCtx)
 }
 

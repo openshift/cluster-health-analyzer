@@ -5,6 +5,8 @@ metadata:
     app.kubernetes.io/name: cluster-health-analyzer-mcp
   name: cluster-health-mcp-server
   namespace: openshift-cluster-observability-operator
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: "cluster-health-analyzer-mcp-tls"
 spec:
   ports:
   - name: mcp
