@@ -67,7 +67,7 @@ run:
 ## run-mcp> run the mcp server locally (requires prometheus and alertmanager running)
 .PHONY: run-mcp
 run-mcp:
-	go run ./main.go mcp
+	go run ./main.go mcp --disable-auth-for-testing
 
 ## generate> run go generate
 .PHONY: generate

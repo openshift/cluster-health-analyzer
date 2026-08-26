@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 type authHeader string
@@ -19,10 +21,11 @@ const authHeaderStr authHeader = "kubernetes-authorization"
 // providing basic methods to run the underlying SSE server
 // and to register tools
 type MCPHealthServer struct {
-	server      *mcp.Server
-	addr        string
-	tlsCertFile string
-	tlsKeyFile  string
+	server        *mcp.Server
+	addr          string
+	tlsCertFile   string
+	tlsKeyFile    string
+	tokenReviewer *TokenReviewer
 }
 
 type MCPHealthServerCfg struct {
@@ -35,10 +38,14 @@ type MCPHealthServerCfg struct {
 
 	TLSCertFile string
 	TLSKeyFile  string
+
+	// DisableAuthForTesting skips TokenReview validation.
+	// Only intended for local development.
+	DisableAuthForTesting bool
 }
 
 // NewMCPHealthServer returns an instance of the MCPHealthServer
-func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
+func NewMCPHealthServer(cfg MCPHealthServerCfg) (*MCPHealthServer, error) {
 	impl := mcp.Implementation{
 		Name:    cfg.Name,
 		Version: cfg.Version,
@@ -50,12 +57,29 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) *MCPHealthServer {
 	// get_incidents
 	mcp.AddTool(server, &incTool.Tool, mcp.ToolHandlerFor[GetIncidentsParams, any](incTool.IncidentsHandler))
 
-	return &MCPHealthServer{
-		server:      server,
-		addr:        cfg.Url,
-		tlsCertFile: cfg.TLSCertFile,
-		tlsKeyFile:  cfg.TLSKeyFile,
+	var reviewer *TokenReviewer
+	if !cfg.DisableAuthForTesting {
+		restCfg, err := rest.InClusterConfig()
+		if err != nil {
+			return nil, errors.Join(errors.New("failed to build in-cluster config for token review"), err)
+		}
+		clientset, err := kubernetes.NewForConfig(restCfg)
+		if err != nil {
+			return nil, errors.Join(errors.New("failed to create kubernetes client for token review"), err)
+		}
+		reviewer = NewTokenReviewer(clientset)
+		slog.Info("TokenReview authentication enabled")
+	} else {
+		slog.Warn("Authentication is disabled — do not use in production")
 	}
+
+	return &MCPHealthServer{
+		server:        server,
+		addr:          cfg.Url,
+		tlsCertFile:   cfg.TLSCertFile,
+		tlsKeyFile:    cfg.TLSKeyFile,
+		tokenReviewer: reviewer,
+	}, nil
 }
 
 // Start runs the MCPHealthServer
@@ -70,10 +94,27 @@ func (m *MCPHealthServer) Start() error {
 	slog.Info("Starting MCP server on ", "address", m.addr)
 
 	// the following middleware is needed to enrich the context that will be
-	// forwarded until the mcp server with the kubernetes-authorization token
+	// forwarded until the mcp server with the kubernetes-authorization token.
+	// When a TokenReviewer is configured, the token is validated via the
+	// Kubernetes TokenReview API before the request is forwarded.
 	mdw := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authCtx := authFromRequest(r.Context(), r)
+
+			if m.tokenReviewer != nil {
+				token, err := getTokenFromCtx(authCtx)
+				if err != nil {
+					slog.Error("Missing authentication token", "error", err)
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+				if err := m.tokenReviewer.ValidateToken(r.Context(), token); err != nil {
+					slog.Error("Token validation failed", "error", err)
+					http.Error(w, "Unauthorized", http.StatusUnauthorized)
+					return
+				}
+			}
+
 			r = r.WithContext(authCtx)
 			next.ServeHTTP(w, r)
 		})
