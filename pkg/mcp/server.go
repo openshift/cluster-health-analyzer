@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -82,43 +83,36 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) (*MCPHealthServer, error) {
 	}, nil
 }
 
+// handler builds the root http.Handler for the MCP server, registering the
+// healthz endpoint outside the auth middleware and routing everything else
+// through it.
+func (m *MCPHealthServer) handler() http.Handler {
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return m.server
+	}, nil)
+
+	mux := http.NewServeMux()
+
+	// Register the healthz endpoint directly on the mux, outside the
+	// auth middleware, so that kubelet probes can reach it without
+	// a bearer token.
+	mux.HandleFunc("/healthz", healthzHandler)
+
+	// All other paths go through the auth middleware.
+	mux.Handle("/", m.authMiddleware(mcpHandler))
+
+	return mux
+}
+
 // Start runs the MCPHealthServer
 func (m *MCPHealthServer) Start() error {
 	if m.addr == "" {
 		return errors.New("empty http address")
 	}
-	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		return m.server
-	}, nil)
 
 	slog.Info("Starting MCP server on ", "address", m.addr)
 
-	// the following middleware is needed to enrich the context that will be
-	// forwarded until the mcp server with the kubernetes-authorization token.
-	// When a TokenReviewer is configured, the token is validated via the
-	// Kubernetes TokenReview API before the request is forwarded.
-	mdw := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authCtx := authFromRequest(r.Context(), r)
-
-			if m.tokenReviewer != nil {
-				token, err := getTokenFromCtx(authCtx)
-				if err != nil {
-					http.Error(w, "Unauthorized", http.StatusUnauthorized)
-					return
-				}
-				if err := m.tokenReviewer.ValidateToken(r.Context(), token); err != nil {
-					http.Error(w, "Unauthorized", http.StatusUnauthorized)
-					return
-				}
-			}
-
-			r = r.WithContext(authCtx)
-			next.ServeHTTP(w, r)
-		})
-	}
-
-	handlerWithAuthCtx := mdw(handler)
+	h := m.handler()
 
 	if (m.tlsCertFile == "") != (m.tlsKeyFile == "") {
 		return errors.New("both TLS certificate and private key files must be configured")
@@ -128,7 +122,7 @@ func (m *MCPHealthServer) Start() error {
 		slog.Info("TLS enabled for MCP server")
 		tlsServer := &http.Server{
 			Addr:    m.addr,
-			Handler: handlerWithAuthCtx,
+			Handler: h,
 			TLSConfig: &tls.Config{
 				MinVersion: tls.VersionTLS12,
 			},
@@ -137,12 +131,46 @@ func (m *MCPHealthServer) Start() error {
 	}
 
 	slog.Warn("TLS is not configured, serving over plaintext HTTP")
-	return http.ListenAndServe(m.addr, handlerWithAuthCtx)
+	return http.ListenAndServe(m.addr, h)
 }
 
 // RegisterTool registers a new tool on the MCPHealthServer
 func (m *MCPHealthServer) RegisterTool(t *mcp.Tool, handler mcp.ToolHandlerFor[any, any]) {
 	mcp.AddTool(m.server, t, handler)
+}
+
+// healthzHandler responds with 200 OK for liveness and readiness probes.
+func healthzHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := fmt.Fprintln(w, "ok"); err != nil {
+		slog.Debug("healthz: failed to write response", "err", err)
+	}
+}
+
+// authMiddleware returns an http.Handler that enriches the request context
+// with the kubernetes-authorization token. When a TokenReviewer is configured,
+// the token is validated via the Kubernetes TokenReview API before the
+// request is forwarded.
+func (m *MCPHealthServer) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authCtx := authFromRequest(r.Context(), r)
+
+		if m.tokenReviewer != nil {
+			token, err := getTokenFromCtx(authCtx)
+			if err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if err := m.tokenReviewer.ValidateToken(r.Context(), token); err != nil {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
+		r = r.WithContext(authCtx)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func authFromRequest(ctx context.Context, r *http.Request) context.Context {

@@ -61,4 +61,20 @@ spec:
         ports:
         - containerPort: 8085
           name: mcp
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: mcp
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: mcp
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
         terminationMessagePolicy: FallbackToLogsOnError
