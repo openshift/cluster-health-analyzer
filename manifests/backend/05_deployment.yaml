@@ -31,6 +31,13 @@ spec:
             value: "https://thanos-querier.openshift-monitoring.svc.cluster.local:9091/"
           - name: ALERTMANAGER_URL
             value: "https://alertmanager-main.openshift-monitoring.svc.cluster.local:9094"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
         securityContext:
           runAsNonRoot: true
           allowPrivilegeEscalation: false
