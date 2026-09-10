@@ -12,9 +12,9 @@ require (
 	github.com/onsi/gomega v1.38.3
 	github.com/openshift/api v0.0.0-20251208101024-c2a41ea924bd
 	github.com/openshift/library-go v0.0.0-20251205073205-ab8d51820e0b
-	github.com/prometheus/alertmanager v0.29.0
-	github.com/prometheus/client_golang v1.24.0
-	github.com/prometheus/common v0.70.0
+	github.com/prometheus/alertmanager v0.34.0
+	github.com/prometheus/client_golang v1.24.1
+	github.com/prometheus/common v0.70.1
 	github.com/rhobs/kube-health v0.4.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -42,7 +42,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -54,14 +54,14 @@ require (
 	github.com/go-openapi/loads v0.25.2 // indirect
 	github.com/go-openapi/runtime/server-middleware v0.33.2 // indirect
 	github.com/go-openapi/spec v1.0.0 // indirect
-	github.com/go-openapi/swag v0.27.1 // indirect
-	github.com/go-openapi/swag/cmdutils v0.27.1 // indirect
+	github.com/go-openapi/swag v0.28.0 // indirect
+	github.com/go-openapi/swag/cmdutils v0.28.0 // indirect
 	github.com/go-openapi/swag/conv v0.29.1 // indirect
 	github.com/go-openapi/swag/fileutils v0.29.1 // indirect
 	github.com/go-openapi/swag/jsonutils v0.29.1 // indirect
 	github.com/go-openapi/swag/loading v0.29.1 // indirect
 	github.com/go-openapi/swag/mangling v0.29.1 // indirect
-	github.com/go-openapi/swag/netutils v0.27.1 // indirect
+	github.com/go-openapi/swag/netutils v0.28.0 // indirect
 	github.com/go-openapi/swag/pools v0.29.1 // indirect
 	github.com/go-openapi/swag/stringutils v0.29.1 // indirect
 	github.com/go-openapi/swag/typeutils v0.29.1 // indirect
