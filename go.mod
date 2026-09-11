@@ -9,7 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/onsi/ginkgo/v2 v2.32.1
-	github.com/onsi/gomega v1.41.0
+	github.com/onsi/gomega v1.43.0
 	github.com/openshift/api v0.0.0-20260820183036-3db6c4b03286
 	github.com/openshift/library-go v0.0.0-20260821093420-6a2a406da642
 	github.com/prometheus/alertmanager v0.34.0
