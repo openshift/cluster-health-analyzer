@@ -15,11 +15,10 @@ var (
 )
 
 var (
-	promURL                string
-	alertManagerURL        string
-	tlsCertFile            string
-	tlsKeyFile             string
-	disableAuthForTesting  bool
+	promURL         string
+	alertManagerURL string
+	tlsCertFile     string
+	tlsKeyFile      string
 )
 
 var (
@@ -44,16 +43,7 @@ var (
 				}
 			}
 
-			serverCfg := mcp.MCPHealthServerCfg{
-				Name:                 MCPServerName,
-				Version:              MCPServerVersion,
-				Url:                  ":8085",
-				PrometheusURL:        promURL,
-				AlertManagerURL:      alertManagerURL,
-				TLSCertFile:          tlsCertFile,
-				TLSKeyFile:           tlsKeyFile,
-				DisableAuthForTesting: disableAuthForTesting,
-			}
+			serverCfg := newMCPHealthServerConfig()
 
 			server, err := mcp.NewMCPHealthServer(serverCfg)
 			if err != nil {
@@ -75,5 +65,18 @@ func init() {
 	MCPCmd.Flags().StringVar(&alertManagerURL, "alertmanager-url", "", "URL of the AlertManager server")
 	MCPCmd.Flags().StringVar(&tlsCertFile, "tls-cert-file", "", "Path to the TLS certificate file")
 	MCPCmd.Flags().StringVar(&tlsKeyFile, "tls-private-key-file", "", "Path to the TLS private key file")
-	MCPCmd.Flags().BoolVar(&disableAuthForTesting, "disable-auth-for-testing", false, "Disable token authentication (for local development only)")
+	addTestOnlyFlags(MCPCmd.Flags())
+}
+
+func newMCPHealthServerConfig() mcp.MCPHealthServerCfg {
+	return mcp.MCPHealthServerCfg{
+		Name:                  MCPServerName,
+		Version:               MCPServerVersion,
+		Url:                   ":8085",
+		PrometheusURL:         promURL,
+		AlertManagerURL:       alertManagerURL,
+		TLSCertFile:           tlsCertFile,
+		TLSKeyFile:            tlsKeyFile,
+		DisableAuthForTesting: disableAuthForTestingEnabled(),
+	}
 }

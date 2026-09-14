@@ -36,6 +36,7 @@ func newServeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().AddFlagSet(opts.Flags())
+	addTestOnlyFlags(cmd.Flags())
 	return cmd
 }
 

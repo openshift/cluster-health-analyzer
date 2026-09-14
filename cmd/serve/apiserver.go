@@ -28,6 +28,14 @@ type APIServer struct {
 	*genericapiserver.GenericAPIServer
 }
 
+// authenticationConfig contains the delegated authentication and authorization
+// settings and Kubernetes client used to construct the API server.
+type authenticationConfig struct {
+	delegatedAuthentication operatorv1alpha1.DelegatedAuthentication
+	delegatedAuthorization  operatorv1alpha1.DelegatedAuthorization
+	kubeClient              *kubernetes.Clientset
+}
+
 func (s APIServer) Handle(pattern string, handler http.Handler) {
 	s.Handler.NonGoRestfulMux.Handle(pattern, handler)
 }
@@ -58,19 +66,9 @@ func buildServer(o common.Options) (server.Server, error) {
 // authentication/authorization.  and fulfill the minimum requirements for a
 // generic API server.
 func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
-	// We need kubeClient only when authentication/authorization is enabled.
-	var kubeClient *kubernetes.Clientset
-
-	if !o.DisableAuthForTesting {
-		kubeConfig, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
-		if err != nil {
-			return nil, err
-		}
-
-		kubeClient, err = kubernetes.NewForConfig(kubeConfig)
-		if err != nil {
-			return nil, err
-		}
+	authenticationConfig, err := buildAuthenticationConfig(o)
+	if err != nil {
+		return nil, err
 	}
 
 	servingInfo := configv1.HTTPServingInfo{}
@@ -85,10 +83,10 @@ func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 	serverConfig, err := serving.ToServerConfig(
 		context.Background(),
 		servingInfo,
-		operatorv1alpha1.DelegatedAuthentication{Disabled: o.DisableAuthForTesting},
-		operatorv1alpha1.DelegatedAuthorization{Disabled: o.DisableAuthForTesting},
+		authenticationConfig.delegatedAuthentication,
+		authenticationConfig.delegatedAuthorization,
 		o.Kubeconfig,
-		kubeClient,
+		authenticationConfig.kubeClient,
 		nil,   // disable leader election
 		false, // disable http2
 		false, // skip in-cluster auth lookup
@@ -119,6 +117,26 @@ func buildServerConfig(o common.Options) (*genericapiserver.Config, error) {
 	}
 
 	return serverConfig, nil
+}
+
+// buildEnabledAuthenticationConfig creates the production authentication
+// configuration with delegated authentication and authorization enabled.
+func buildEnabledAuthenticationConfig(o common.Options) (authenticationConfig, error) {
+	kubeConfig, err := clientcmd.BuildConfigFromFlags("", o.Kubeconfig)
+	if err != nil {
+		return authenticationConfig{}, err
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return authenticationConfig{}, err
+	}
+
+	return authenticationConfig{
+		delegatedAuthentication: operatorv1alpha1.DelegatedAuthentication{Disabled: false},
+		delegatedAuthorization:  operatorv1alpha1.DelegatedAuthorization{Disabled: false},
+		kubeClient:              kubeClient,
+	}, nil
 }
 
 func tlsVersion(version string) (uint16, error) {
