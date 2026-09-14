@@ -67,7 +67,7 @@ TLS setup mirrors the Prometheus client: reads service account token and CA cert
 
 The server uses `k8s.io/apiserver` (`GenericAPIServer`) for auth and TLS:
 
-- **Auth delegation**: `operatorv1alpha1.DelegatedAuthentication` and `DelegatedAuthorization` delegate to the cluster's kube-apiserver. Disabled via `--disable-auth-for-testing`
+- **Auth delegation**: `operatorv1alpha1.DelegatedAuthentication` and `DelegatedAuthorization` delegate to the cluster's kube-apiserver in production builds. A development-only bypass is available only with the `testonly` Go build tag.
 - **TLS**: configurable via `--tls-cert-file`, `--tls-private-key-file`, `--tls-min-version` (default `VersionTLS12`, supports `VersionTLS13`), `--tls-cipher-suites`
 - **Client CA**: intentionally NOT set on `servingInfo.ClientCA` — the CA is read from the `kube-system/extension-apiserver-authentication` ConfigMap instead
 - **HTTP/2 disabled**: `serving.ToServerConfig()` is called with `false` for HTTP/2
@@ -78,7 +78,7 @@ Default options are populated from environment variables: `REFRESH_INTERVAL` (de
 
 - **Service account paths are hardcoded.** Both `pkg/prom/client.go` and `pkg/alertmanager/loader.go` read token from `/var/run/secrets/kubernetes.io/serviceaccount/token` and CA from `/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt`. These paths only exist inside a Kubernetes pod with a mounted service account.
 - **MetricSet labels are dynamic.** `collector.go` creates `prometheus.Desc` per `Collect()` call because the label set varies per metric. This means Prometheus's `Describe()` only returns a single generic descriptor — tools expecting static label schemas may show warnings.
-- **`DisableAuthForTesting` generates self-signed certs.** When auth is disabled, `serving.ToServerConfig()` auto-generates self-signed TLS certificates. The `--tls-cert-file`/`--tls-private-key-file` flags are only used when auth is enabled.
+- **Test-only self-signed TLS**: when the authentication bypass is enabled in a `testonly` build, `serving.ToServerConfig()` generates self-signed TLS certificates. In auth-enabled configurations, `--tls-cert-file` and `--tls-private-key-file` supply the serving certificate and key; the production deployment mounts both from the service-ca-provisioned secret.
 - **History lookback is 4 days, not configurable.** `historyLookback` in `server.go` is a constant (4 * 24h). On startup, the processor queries Thanos for this range to rebuild the groups collection. Long outages beyond 4 days will lose group continuity.
 - **Both Prometheus and Alertmanager clients share the same TLS pattern** (duplicated `createCertPool()` and `readTokenFromFile()` functions). Changes to TLS handling must be applied in both packages.
 - **`RangeVector.Expand()` is dead code.** The dense `Matrix` conversion exists but is unused — the codebase switched to interval-based processing. It's kept explicitly for possible future use.
