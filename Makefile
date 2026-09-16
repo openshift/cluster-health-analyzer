@@ -42,8 +42,9 @@ $(GOLANGCI_LINT):
 
 ## test> run unit tests (excludes integration tests)
 .PHONY: test
-test: 
+test:
 	go test -race $$(go list ./... | grep -v /test/integration)
+	go test -race -tags testonly ./cmd/serve ./cmd/mcp
 
 ## test-verbose> run unit tests with verbose output (excludes integration tests)
 .PHONY: test-verbose
@@ -59,15 +60,15 @@ test-verbose:
 proxy:
 	./hack/listen-thanos.sh
 
-## run> run the server locally (requires prometheus and alertmanager runnning)
+## run> run a test-only local server (requires prometheus and alertmanager runnning)
 .PHONY: run
 run:
-	go run ./main.go serve --disable-auth-for-testing
+	go run -tags testonly ./main.go serve --disable-auth-for-testing
 
 ## run-mcp> run the mcp server locally (requires prometheus and alertmanager running)
 .PHONY: run-mcp
 run-mcp:
-	go run ./main.go mcp --disable-auth-for-testing
+	go run -tags testonly ./main.go mcp --disable-auth-for-testing
 
 ## generate> run go generate
 .PHONY: generate
@@ -82,7 +83,7 @@ simulate:
 
 .PHONY: build
 build:
-	go build -o bin/cluster-health-analyzer . 
+	go build -o bin/cluster-health-analyzer .
 
 # ----------------
 # Deploy
@@ -90,7 +91,7 @@ build:
 
 ## deploy> deploy to a cluster (requires oc login first)
 .PHONY: deploy
-deploy: 
+deploy:
 	oc apply -f manifests/backend manifests/frontend
 
 ## undeploy> remove the services from the cluster (requires oc login first)
@@ -101,4 +102,3 @@ undeploy:
 ## precommit> run linting and unit tests
 .PHONY: precommit
 precommit: lint test
-

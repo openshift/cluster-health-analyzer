@@ -52,7 +52,7 @@ func NewMCPHealthServer(cfg MCPHealthServerCfg) (*MCPHealthServer, error) {
 		Version: cfg.Version,
 	}
 
-	server := mcp.NewServer(&impl, &mcp.ServerOptions{HasTools: true})
+	server := mcp.NewServer(&impl, nil)
 
 	incTool := NewIncidentsTool(cfg.PrometheusURL, cfg.AlertManagerURL)
 	// get_incidents

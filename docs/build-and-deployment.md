@@ -22,8 +22,8 @@
 The Makefile follows a convention of short, composable targets:
 
 - **`make build`**: compiles to `bin/cluster-health-analyzer`
-- **`make run`**: runs `go run ./main.go serve --disable-auth-for-testing` — requires `make proxy` running in another terminal
-- **`make run-mcp`**: runs `go run ./main.go mcp`
+- **`make run`**: runs `go run -tags testonly ./main.go serve --disable-auth-for-testing` — requires `make proxy` running in another terminal. The `testonly` tag is required for this development-only auth bypass and is not used for production builds.
+- **`make run-mcp`**: runs `go run -tags testonly ./main.go mcp --disable-auth-for-testing`. The `testonly` tag is required for this development-only auth bypass and is not used for production builds.
 - **`make proxy`**: calls `hack/listen-thanos.sh` to port-forward thanos-querier
 - **`make lint`**: runs `golangci-lint` (auto-installs via `hack/install-golangci-lint.sh` if missing)
 - **`make generate`**: runs `go generate ./...` (produces MockGen mocks)
@@ -39,8 +39,8 @@ Two Dockerfiles exist with near-identical structure (multi-stage, CGO_ENABLED=1,
 
 | File | Builder Base | Purpose |
 |------|-------------|---------|
-| `Dockerfile` | `golang:1.25` | Upstream/development builds — includes `-tags strictfipsruntime` build flag but does not set `GOEXPERIMENT` |
-| `Dockerfile.konflux` | `brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.25` | Red Hat Konflux internal build pipeline — requires FIPS (sets `GOEXPERIMENT=strictfipsruntime`) |
+| `Dockerfile` | `golang:1.27` | Upstream/development builds — includes `-tags strictfipsruntime` build flag but does not set `GOEXPERIMENT` |
+| `Dockerfile.konflux` | `brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.26` | Red Hat Konflux internal build pipeline — requires FIPS (sets `GOEXPERIMENT=strictfipsruntime`) |
 
 Both produce a `ubi9/ubi-minimal` runtime image running as non-root user `65532:65532`. The entrypoint is `/bin/cluster-health-analyzer`. The generic Dockerfile uses the standard Go builder and does not require FIPS compliance; the Konflux Dockerfile is for the internal Red Hat build pipeline and requires it.
 
@@ -60,7 +60,7 @@ MCP manifests (`manifests/mcp/`) deploy a separate pod in `openshift-cluster-obs
 ## Gotchas
 
 - **`make deploy` references `manifests/frontend`** which does not exist in the repo. This will produce an error if `manifests/frontend` hasn't been created separately.
-- **TLS is mandatory in production.** The deployment mounts a serving cert secret (`cluster-health-analyzer-tls`) auto-provisioned by the OpenShift service-ca operator via the Service annotation. Local dev uses `--disable-auth-for-testing` which generates self-signed certs.
+- **Production builds omit the test-only authentication-bypass flags.** The `serve` command delegates Kubernetes authentication and authorization, while the MCP server validates tokens with `TokenReview`. The backend deployment mounts a serving certificate secret (`cluster-health-analyzer-tls`) auto-provisioned by the OpenShift service-ca operator. `make run` and `make run-mcp` use separate `testonly` builds, which may disable authentication only for local development.
 - **The namespace label `openshift.io/cluster-monitoring: "true"` is required.** Without it, the cluster-monitoring-operator won't discover the ServiceMonitor and metrics won't be scraped.
 - **CGO_ENABLED=1 in Dockerfiles.** The build requires CGO (likely for FIPS compliance via `strictfipsruntime`). This means cross-compilation needs the target platform's C toolchain.
 - **Konflux vs upstream Dockerfiles diverge on GOEXPERIMENT.** `Dockerfile.konflux` sets `GOEXPERIMENT=strictfipsruntime` as an env var in addition to the build tag. If the two Dockerfiles get out of sync, FIPS behavior may differ.
@@ -68,7 +68,7 @@ MCP manifests (`manifests/mcp/`) deploy a separate pod in `openshift-cluster-obs
 
 ## Dependencies & Context
 
-- **Go 1.25** with `CGO_ENABLED=1`. The Konflux build requires FIPS compliance via `-tags strictfipsruntime` and `GOEXPERIMENT=strictfipsruntime`; the upstream Dockerfile does not require FIPS
+- **Go 1.26** with `CGO_ENABLED=1`. The Konflux build requires FIPS compliance via `-tags strictfipsruntime` and `GOEXPERIMENT=strictfipsruntime`; the upstream Dockerfile does not require FIPS
 - **golangci-lint**: linting, auto-installed by `hack/install-golangci-lint.sh`
 - **promtool**: Prometheus CLI tool for TSDB block creation (used by stress tests, installed via `hack/install-promtool.sh`)
 - **yq**: YAML processor for manifest patching during integration deployment

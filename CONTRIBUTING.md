@@ -2,7 +2,7 @@
 
 ## Development Setup
 
-1. Install Go 1.25+
+1. Install Go 1.26+
 2. Login to an OpenShift cluster: `oc login`
 3. Start the Thanos proxy: `make proxy`
 4. In a separate terminal, run the server: `make run`

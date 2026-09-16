@@ -15,11 +15,8 @@ type Options struct {
 	CertFile string
 	CertKey  string
 
-	TLSMinVersion  string
+	TLSMinVersion   string
 	TLSCipherSuites []string
-
-	// Only to be used to for testing.
-	DisableAuthForTesting bool
 
 	// Disable components health evaluation
 	DisableComponentsHealth bool
@@ -50,8 +47,6 @@ func (o *Options) Flags() *pflag.FlagSet {
 	fs.StringSliceVar(&o.TLSCipherSuites, "tls-cipher-suites", nil,
 		"Comma-separated list of cipher suites for the server. If omitted, the default secure cipher suites will be used")
 
-	fs.BoolVar(&o.DisableAuthForTesting, "disable-auth-for-testing", o.DisableAuthForTesting,
-		"Flag for testing purposes to disable auth")
 	fs.BoolVar(&o.DisableComponentsHealth, "disable-components-health", o.DisableComponentsHealth,
 		"Flag to disable components health evaluation based on alerts and kube-health evaluation")
 	fs.BoolVar(&o.DisableIncidents, "disable-incidents", o.DisableIncidents,
