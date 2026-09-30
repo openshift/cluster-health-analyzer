@@ -4,6 +4,7 @@ package prom
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -38,6 +39,15 @@ func NewLoaderWithToken(prometheusURL, token string) (Loader, error) {
 	return &loader{
 		api: v1.NewAPI(promClient),
 	}, nil
+}
+
+// NewLoaderWithRoundTripper creates a loader using a supplied transport.
+func NewLoaderWithRoundTripper(prometheusURL string, roundTripper http.RoundTripper) (Loader, error) {
+	promClient, err := NewPrometheusClientWithRoundTripper(prometheusURL, roundTripper)
+	if err != nil {
+		return nil, err
+	}
+	return &loader{api: v1.NewAPI(promClient)}, nil
 }
 
 func (c *loader) LoadQuery(ctx context.Context, query string, t time.Time) ([]model.LabelSet, error) {
