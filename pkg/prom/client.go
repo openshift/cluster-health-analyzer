@@ -57,6 +57,21 @@ func NewPrometheusClientWithToken(prometheusURL string, token string) (api.Clien
 	return api.NewClient(api_config)
 }
 
+// NewPrometheusClientWithRoundTripper creates a client using a supplied
+// transport for authentication and TLS.
+func NewPrometheusClientWithRoundTripper(prometheusURL string, roundTripper http.RoundTripper) (api.Client, error) {
+	if roundTripper == nil {
+		return nil, errors.New("round tripper is required")
+	}
+	if !regexp.MustCompile(`^(http|https)://`).MatchString(prometheusURL) {
+		return nil, errors.New("invalid URL: must start with https:// or http://")
+	}
+	return api.NewClient(api.Config{
+		Address:      prometheusURL,
+		RoundTripper: roundTripper,
+	})
+}
+
 func createCertPool() (*x509.CertPool, error) {
 	certs := x509.NewCertPool()
 

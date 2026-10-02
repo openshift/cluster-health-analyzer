@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -38,7 +39,14 @@ var (
 )
 
 const (
+	// GetIncidentsDescription describes the get_incidents MCP tool.
+	GetIncidentsDescription = `List the current firing incidents in the cluster. 
+		One incident is a group of related alerts that are likely triggered by the same root cause.
+		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.
+		`
+
 	getIncidentsToolName  = "get_incidents"
+	minTimeRangeHours     = 1
 	defaultTimeRangeHours = 360
 
 	clusterIDStr = "clusterID"
@@ -60,8 +68,29 @@ type incidentToolCfg struct {
 }
 
 type GetIncidentsParams struct {
-	TimeRange   uint   `json:"time_range"`
-	MinSeverity string `json:"min_severity"`
+	TimeRange   float64 `json:"time_range"`
+	MinSeverity string  `json:"min_severity"`
+}
+
+// NormalizeGetIncidentsParams applies defaults to omitted arguments and
+// validates supplied hours and severity. The supplied flags distinguish
+// omission from an explicit zero or empty value.
+func NormalizeGetIncidentsParams(params GetIncidentsParams, timeRangeSupplied, minSeveritySupplied bool) (GetIncidentsParams, error) {
+	if !timeRangeSupplied {
+		params.TimeRange = defaultTimeRangeHours
+	}
+	if !(params.TimeRange >= minTimeRangeHours && params.TimeRange <= defaultTimeRangeHours) {
+		return GetIncidentsParams{}, fmt.Errorf("time_range must be between %d and %d hours", minTimeRangeHours, defaultTimeRangeHours)
+	}
+	if !minSeveritySupplied {
+		params.MinSeverity = processor.Warning.String()
+	}
+	switch strings.ToLower(params.MinSeverity) {
+	case processor.Healthy.String(), processor.Warning.String(), processor.Critical.String():
+	default:
+		return GetIncidentsParams{}, errors.New("min_severity must be info, warning, or critical")
+	}
+	return params, nil
 }
 
 var (
@@ -71,24 +100,21 @@ var (
 				Type:        "number",
 				Default:     json.RawMessage([]byte(strconv.Itoa(defaultTimeRangeHours))),
 				Description: "Maximum age of incidents to include in hours (max 360 for 15 days). Default: 360",
-				Minimum:     jsonschema.Ptr(float64(1)),
+				Minimum:     jsonschema.Ptr(float64(minTimeRangeHours)),
 				Maximum:     jsonschema.Ptr(float64(defaultTimeRangeHours)),
 			},
 			"min_severity": {
 				Type:        "string",
 				Default:     json.RawMessage([]byte(strconv.Quote(processor.Warning.String()))),
-				Pattern:     fmt.Sprintf("(?i)(%s|%s|%s)$", processor.Healthy.String(), processor.Warning.String(), processor.Critical.String()),
+				Pattern:     fmt.Sprintf("(?i)^(%s|%s|%s)$", processor.Healthy.String(), processor.Warning.String(), processor.Critical.String()),
 				Description: "Minimum severity level to be applied as filter for incidents. Allowed values, from lower severity to higher severity, can be: info, warning and critical. Default: warning.",
 			},
 		},
 	}
 
 	defaultMcpGetIncidentsTool = mcp.Tool{
-		Name: getIncidentsToolName,
-		Description: `List the current firing incidents in the cluster. 
-		One incident is a group of related alerts that are likely triggered by the same root cause.
-		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.
-		`,
+		Name:        getIncidentsToolName,
+		Description: GetIncidentsDescription,
 		Annotations: &mcp.ToolAnnotations{
 			Title:        "Provides information about Incidents in the cluster",
 			ReadOnlyHint: true,
@@ -117,6 +143,10 @@ func NewIncidentsTool(promURL, alertmanagerURL string) IncidentTool {
 // in-cluster Prometheus and queries the Incidents metrics.
 func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallToolRequest, params GetIncidentsParams) (*mcp.CallToolResult, any, error) {
 	slog.Info("Incidents tool received request with ", "params", params)
+	params, err := NormalizeGetIncidentsParams(params, params.TimeRange != 0, params.MinSeverity != "")
+	if err != nil {
+		return nil, nil, err
+	}
 	token, err := getTokenFromCtx(ctx)
 	if err != nil {
 		slog.Error(err.Error())
@@ -135,9 +165,15 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 		return nil, nil, err
 	}
 
-	timeRange := defaultTimeRangeHours
+	return i.GetIncidents(ctx, params, promLoader, amLoader)
+}
+
+// GetIncidents retrieves incidents using the supplied clients, without
+// depending on how the caller obtained its credentials.
+func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsParams, promLoader prom.Loader, amLoader alertmanager.Loader) (*mcp.CallToolResult, any, error) {
+	timeRange := float64(defaultTimeRangeHours)
 	if params.TimeRange > 0 {
-		timeRange = int(params.TimeRange)
+		timeRange = params.TimeRange
 	}
 
 	// the method ParseHealthValue will default to warning in the case of not recognized severity
@@ -145,7 +181,7 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 
 	timeNow := time.Now()
 	queryTimeRange := v1.Range{
-		Start: timeNow.Add(-time.Duration(timeRange) * time.Hour),
+		Start: timeNow.Add(-time.Duration(timeRange * float64(time.Hour))),
 		End:   timeNow,
 		Step:  300 * time.Second,
 	}
