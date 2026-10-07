@@ -2,6 +2,7 @@ package incidents
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/containers/kubernetes-mcp-server/pkg/api"
 	"github.com/containers/kubernetes-mcp-server/pkg/config"
+	analyzer "github.com/openshift/cluster-health-analyzer/pkg/mcp"
 	"k8s.io/client-go/rest"
 )
 
@@ -27,7 +29,7 @@ func (*testBackendConfig) Validate() error {
 }
 
 func init() {
-	config.RegisterToolsetConfig(metricsToolsetName, func(_ context.Context, primitive toml.Primitive, md toml.MetaData) (api.ExtendedConfig, error) {
+	config.RegisterToolsetConfig(metricsToolsetName, func(_ context.Context, primitive toml.Primitive, md toml.MetaData) (config.ExtendedConfig, error) {
 		var cfg testBackendConfig
 		if err := md.PrimitiveDecode(primitive, &cfg); err != nil {
 			return nil, err
@@ -62,7 +64,7 @@ func (c testKubernetesClient) RESTConfig() *rest.Config {
 func TestGetIncidentsRequiresBackendURLs(t *testing.T) {
 	result, err := handleGetIncidents(api.ToolHandlerParams{
 		Context:    context.Background(),
-		BaseConfig: config.BaseDefault(),
+		Config:    config.BaseDefault(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,15 +133,15 @@ func TestGetIncidentsBackendConfigSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := config.ReadToml([]byte(tt.configTOML))
+			cfg, err := config.ReadToml(t.Context(), []byte(tt.configTOML))
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := handleGetIncidents(api.ToolHandlerParams{
 				Context:          context.Background(),
-				BaseConfig:       cfg,
+				Config:           cfg,
 				KubernetesClient: testKubernetesClient{},
-				ToolCallRequest:  testRequest{},
+				Request:          testRequest{},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -165,7 +167,7 @@ func TestGetIncidentsUsesServiceCAAndRESTConfigToken(t *testing.T) {
 	}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := config.ReadToml([]byte(fmt.Sprintf(`
+	cfg, err := config.ReadToml(t.Context(), []byte(fmt.Sprintf(`
 		[toolset_configs."observability/metrics"]
 		prometheus_url = %q
 		alertmanager_url = %q
@@ -175,9 +177,9 @@ func TestGetIncidentsUsesServiceCAAndRESTConfigToken(t *testing.T) {
 	}
 	result, err := handleGetIncidentsWithCAFile(api.ToolHandlerParams{
 		Context:          context.Background(),
-		BaseConfig:       cfg,
+		Config:           cfg,
 		KubernetesClient: testKubernetesClient{caData: []byte("invalid Kubernetes CA")},
-		ToolCallRequest:  testRequest{},
+		Request:          testRequest{},
 	}, caFile)
 	if err != nil {
 		t.Fatal(err)
@@ -192,6 +194,64 @@ func TestGetIncidentsUsesServiceCAAndRESTConfigToken(t *testing.T) {
 		}
 	default:
 		t.Fatal("the Prometheus backend received no request")
+	}
+}
+
+func TestGetIncidentsReturnsStructuredContent(t *testing.T) {
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/query_range":
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+		case "/api/v1/query":
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		case "/api/v2/alerts":
+			_, _ = fmt.Fprint(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	caFile := filepath.Join(t.TempDir(), "service-ca.crt")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: backend.Certificate().Raw,
+	}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.ReadToml(t.Context(), []byte(fmt.Sprintf(`
+		[toolset_configs."observability/metrics"]
+		prometheus_url = %q
+		alertmanager_url = %q
+	`, backend.URL, backend.URL)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := handleGetIncidentsWithCAFile(api.ToolHandlerParams{
+		Context:          context.Background(),
+		Config:           cfg,
+		KubernetesClient: testKubernetesClient{},
+		Request:          testRequest{},
+	}, caFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	response, ok := result.StructuredContent.(analyzer.Response)
+	if !ok {
+		t.Fatalf("structured content has type %T, want analyzer.Response", result.StructuredContent)
+	}
+	if response.Incidents.Total != 0 {
+		t.Fatalf("incident total = %d, want 0", response.Incidents.Total)
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "<DATA>\n"+string(data)+"\n</DATA>") {
+		t.Fatalf("text response does not contain the structured incident data: %q", result.Content)
 	}
 }
 
@@ -224,7 +284,7 @@ func TestParseGetIncidentsArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseGetIncidentsArgs(api.ToolHandlerParams{
-				ToolCallRequest: testRequest{arguments: tt.arguments},
+				Request: testRequest{arguments: tt.arguments},
 			})
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantError) {

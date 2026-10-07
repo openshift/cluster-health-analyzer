@@ -393,10 +393,16 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 					return tt.amLoader, nil
 				},
 			}
-			got, _, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request, tt.args.params)
+			got, structured, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request, tt.args.params)
 
 			assert.Equal(t, tt.expectedResult, got)
 			assert.Equal(t, tt.expectedErr, err)
+			assert.IsType(t, Response{}, structured)
+			data, marshalErr := json.Marshal(structured)
+			if assert.NoError(t, marshalErr) {
+				assert.Equal(t, fmt.Sprintf(getIncidentsResponseTemplate, string(data)),
+					got.Content[0].(*mcp.TextContent).Text)
+			}
 		})
 	}
 

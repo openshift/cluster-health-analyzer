@@ -1,6 +1,8 @@
 package incidents
 
 import (
+	"context"
+
 	"github.com/containers/kubernetes-mcp-server/pkg/api"
 	analyzer "github.com/openshift/cluster-health-analyzer/pkg/mcp"
 )
@@ -24,21 +26,21 @@ func (t *Toolset) GetDescription() string {
 }
 
 // GetTools returns the get_incidents tool.
-func (t *Toolset) GetTools(_ api.FilteringProvider) []api.ServerTool {
+func (t *Toolset) GetTools(_ context.Context, _ api.ToolsetContext) []api.ServerTool {
 	return initGetIncidents()
 }
 
 // GetPrompts returns no prompts.
-func (t *Toolset) GetPrompts() []api.ServerPrompt {
+func (t *Toolset) GetPrompts(_ context.Context, _ api.ToolsetContext) []api.ServerPrompt {
 	return nil
 }
 
 // GetResources returns no resources.
-func (t *Toolset) GetResources() []api.ServerResource {
+func (t *Toolset) GetResources(_ context.Context, _ api.ToolsetContext) []api.ServerResource {
 	return nil
 }
 
 // GetResourceTemplates returns no resource templates.
-func (t *Toolset) GetResourceTemplates() []api.ServerResourceTemplate {
+func (t *Toolset) GetResourceTemplates(_ context.Context, _ api.ToolsetContext) []api.ServerResourceTemplate {
 	return nil
 }

@@ -38,7 +38,7 @@ func (*backendConfig) Validate() error {
 }
 
 func init() {
-	config.RegisterToolsetConfig(ToolsetName, func(_ context.Context, primitive toml.Primitive, md toml.MetaData) (api.ExtendedConfig, error) {
+	config.RegisterToolsetConfig(ToolsetName, func(_ context.Context, primitive toml.Primitive, md toml.MetaData) (config.ExtendedConfig, error) {
 		var cfg backendConfig
 		if err := md.PrimitiveDecode(primitive, &cfg); err != nil {
 			return nil, err
@@ -125,7 +125,7 @@ func handleGetIncidentsWithCAFile(params api.ToolHandlerParams, caFile string) (
 	}
 
 	incidentTool := analyzer.NewIncidentsTool("", "")
-	result, _, err := incidentTool.GetIncidents(params.Context, args, promLoader, alertLoader)
+	result, response, err := incidentTool.GetIncidents(params.Context, args, promLoader, alertLoader)
 	if err != nil {
 		return api.NewToolCallResult("", err), nil
 	}
@@ -136,7 +136,7 @@ func handleGetIncidentsWithCAFile(params api.ToolHandlerParams, caFile string) (
 	if !ok {
 		return api.NewToolCallResult("", errors.New("get_incidents returned a non-text result")), nil
 	}
-	return api.NewToolCallResult(text.Text, nil), nil
+	return api.NewToolCallResultFull(text.Text, response, nil), nil
 }
 
 // parseGetIncidentsArgs reads tool arguments and applies the shared incident

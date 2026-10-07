@@ -230,7 +230,7 @@ func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsPara
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: response},
 		},
-	}, nil, nil
+	}, r, nil
 }
 
 // formatToRFC3339 formats a time to RFC3339 string, returns empty string for zero time
