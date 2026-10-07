@@ -152,7 +152,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
 				request: &mcp.CallToolRequest{},
 				params: GetIncidentsParams{
-					TimeRange:   uint(300),
+					TimeRange:   300,
 					MinSeverity: processor.Healthy.String(),
 				},
 			},
@@ -330,7 +330,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 				ctx:     context.WithValue(t.Context(), authHeaderStr, "test"),
 				request: &mcp.CallToolRequest{},
 				params: GetIncidentsParams{
-					TimeRange:   uint(300),
+					TimeRange:   300,
 					MinSeverity: processor.Warning.String(),
 				},
 			},
@@ -393,13 +393,40 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 					return tt.amLoader, nil
 				},
 			}
-			got, _, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request, tt.args.params)
+			got, structured, err := tool.IncidentsHandler(tt.args.ctx, tt.args.request, tt.args.params)
 
 			assert.Equal(t, tt.expectedResult, got)
 			assert.Equal(t, tt.expectedErr, err)
+			assert.IsType(t, Response{}, structured)
+			data, marshalErr := json.Marshal(structured)
+			if assert.NoError(t, marshalErr) {
+				assert.Equal(t, fmt.Sprintf(getIncidentsResponseTemplate, string(data)),
+					got.Content[0].(*mcp.TextContent).Text)
+			}
 		})
 	}
 
+}
+
+func TestGetIncidentsUsesFractionalHours(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	loader := mocks.NewMockPrometheusLoader(ctrl)
+	loader.EXPECT().
+		LoadVectorRange(gomock.Any(), processor.ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), 300*time.Second).
+		DoAndReturn(func(_ context.Context, _ string, start, end time.Time, _ time.Duration) (prom.RangeVector, error) {
+			if got := end.Sub(start); got != 90*time.Minute {
+				t.Fatalf("query duration = %v, want 90m", got)
+			}
+			return nil, context.Canceled
+		})
+
+	tool := NewIncidentsTool("", "")
+	_, _, err := tool.GetIncidents(t.Context(), GetIncidentsParams{TimeRange: 1.5}, loader, nil)
+	if err != context.Canceled {
+		t.Fatalf("error = %v, want %v", err, context.Canceled)
+	}
 }
 
 func TestTransformPromValueToIncident(t *testing.T) {

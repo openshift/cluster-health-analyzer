@@ -38,6 +38,7 @@ type Loader interface {
 type LoaderConfig struct {
 	AlertManagerURL string
 	Token           string
+	RoundTripper    http.RoundTripper
 }
 
 type loader struct {
@@ -53,6 +54,10 @@ func NewLoader(cfg LoaderConfig) (Loader, error) {
 	useTls := strings.HasPrefix(cfg.AlertManagerURL, "https://")
 
 	runtime := runtimeclient.New(amURL.Host, path.Join(amURL.Path, "/api/v2"), []string{amURL.Scheme})
+	if cfg.RoundTripper != nil {
+		runtime.Transport = cfg.RoundTripper
+		return &loader{cli: client.New(runtime, strfmt.Default)}, nil
+	}
 	if useTls {
 
 		token := cfg.Token
