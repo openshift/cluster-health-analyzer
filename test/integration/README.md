@@ -2,41 +2,226 @@
 
 Basic integration test suite for cluster-health-analyzer running on OpenShift.
 
-## Usage
+## Usage (Make is optional)
+
+Provision the existing stack independently and run these commands from the repository
+root. Tests do not invoke Make or require Make-generated files or environment flags.
+Configuration defaults are defined in `framework.LoadConfig`; fixtures are embedded
+in the test binaries. Ginkgo is already a Go module dependency and needs no global
+installation.
 
 ```bash
-# Deploy and test
-make deploy-integration
-make test-integration
-
-# Cleanup
-make undeploy-integration
+# Standard integration tests; excludes stress and long scenarios.
+go run github.com/onsi/ginkgo/v2/ginkgo -v \
+  --label-filter='!stress&&!stress-simulate&&!long' ./test/integration/...
 ```
+
+## Self-contained long grouping run (local or CI)
+
+With Go, `oc`, Bash, and access to a disposable OpenShift test cluster:
+
+```bash
+make test-integration-long
+# Alternatively, deploy an image already built by the pipeline:
+CHA_IMAGE=quay.io/example/cluster-health-analyzer:ci make test-integration-long
+```
+
+The target installs `yq` if missing, compiles the suite, and (unless `CHA_IMAGE` is
+supplied) uploads the current checkout's build inputs to an OpenShift binary Docker
+build. OpenShift builds and pushes to its integrated registry; the resulting image
+reference is injected into a temporary copy of the backend manifests. No local
+container engine, registry route or registry login is needed. The registry and
+OpenShift build API must be enabled, and the build must be able to pull base images
+and download Go modules. Permissions are needed for builds, image streams, backend
+resources (including cluster RBAC), monitoring pod port-forwards and PrometheusRules.
+`NAMESPACE`/`DEPLOYMENT_NAME` must match the supplied `MANIFESTS_PATH` manifests.
+
+The command is identical locally and in Prow: `make test-integration-long`.
+When ci-operator supplies `CHA_IMAGE`, that image is deployed without rebuilding.
+The script accepts `CHA_NAMESPACE`, `CHA_DEPLOYMENT_NAME` and `CHA_MANIFESTS_PATH`
+directly, with precedence over their unprefixed equivalents. In Prow (identified
+by `PROW_JOB_ID`), the reserved `NAMESPACE` is ignored: the deployment namespace
+comes from `CHA_NAMESPACE` or defaults to `openshift-cluster-health-analyzer`.
+The existing `KUBECONFIG` is used; no interactive login or separate proxy command
+is required. Cluster access and the tools listed above remain prerequisites.
+
+After deploying and waiting for the new rollout, the script starts Thanos and
+Alertmanager port-forwards on dynamically allocated loopback ports. It supplies
+`THANOS_URL` and `ALERTMANAGER_URL` to the suite, overriding existing values, and
+fails if either proxy exits. Alertmanager is available for diagnostics; the current
+grouping assertions query Thanos. Proxies and temporary files are removed on exit,
+including failure or interruption, and the test exit status is preserved.
+
+The backend deployment and build/image resources remain for diagnostics; repeated
+runs accumulate build resources. This target updates the backend in the selected
+cluster, so do not point it at production or run concurrent jobs against the same
+backend. It does not provision OpenShift, reset history, or silence notifications:
+prepare non-notifying routing as described below. Allow CI time for build/rollout
+plus the two-hour suite and cleanup (the outer test timeout is 2h10m).
+
+## Long grouping scenarios against an existing stack
+
+```bash
+go run github.com/onsi/ginkgo/v2/ginkgo -v \
+  --label-filter=long --timeout=2h ./test/integration/tests
+```
+
+This command selects only the five `long`/`grouping` specs, executes them serially
+in declaration order and sets a two-hour suite timeout (40 minutes per spec).
+No environment-variable gate exists in the Go tests and no CI job is changed.
+Direct Go/Ginkgo runs without a label filter include the long specs, so CI entrypoints
+must explicitly exclude `long` when these cases are not intended to run. Stress
+specs likewise require explicit exclusion from standard runs.
+
+The Make targets are:
+
+- `make test-integration`: selects `!stress&&!stress-simulate&&!long`.
+- `make test-stress-simulate`: selects `stress-simulate` with the Make-provided stress settings.
+- `make test-integration-long`: builds/deploys and owns proxies, then selects `long`
+  with a two-hour timeout (see above).
+An ordered run stops subsequent cases after a failure; individual cases can also
+be selected for diagnosis:
+
+```bash
+go run github.com/onsi/ginkgo/v2/ginkgo \
+  -v --label-filter='long && integration-exact-replay' --timeout=40m \
+  ./test/integration/tests
+```
+
+For direct Go/Ginkgo execution, a running CHA and the Prometheus/Thanos/Alertmanager
+stack must already be configured, with alert and CHA metrics queryable through
+`THANOS_URL`. Grouping
+tests do not look up a CHA Deployment or use `NAMESPACE`/`DEPLOYMENT_NAME` to select
+an instance: their `grouping` label bypasses the deployment preflight check only.
+When a grouping spec fails, deployment debug information is attempted when a
+matching deployment is configured; collection returns early otherwise (CHA exposes
+the incidents those specs assert on). Other specs keep preflight and diagnostics.
+Diagnostics print only an allow-listed pod summary; raw pod logs are never
+collected — fetch them manually with `oc logs` if needed.
+The Go tests themselves create **only PrometheusRule resources** in
+`openshift-monitoring`: no stack, exporter, UI, Deployment, port-forward, namespace,
+storage reset or application-configuration changes are introduced.
+
+### Inputs and assertions
+
+`fixtures/testdata/grouping_scenarios.yaml` contains the same five scenarios as the
+debugging UI, with their real minute offsets, source labels, durations and expected
+groups. `grouping_prometheusrule.yaml` uses the existing embedded-template pattern.
+
+Each rule resource embeds a constant scenario clock. The test sets the clock to the
+Unix time when it renders the rule, which is before `Apply`. Alerting expressions
+select the clock only inside their configured windows; Prometheus handles the real
+30-second pending, firing and resolution transitions. Keeping the clock value also
+supplies a stable `scenario_start` alert label for timing checks. Kubernetes apply
+time and Operator reconciliation therefore consume the initial two-minute window.
+
+Alert names retain their recognizable base names but receive a unique `Test<run>`
+suffix. Repeated windows use the same suffixed name. Identical-label windows merge
+into one OR expression, while severity escalation uses two rules with the same
+name and different severity labels. No label identifies an individual window,
+which would invalidate the exact-matching case.
+
+| Case | Starts | Expected result |
+| --- | --- | --- |
+| `integration-time-proximity` | 0m, 10m, 30m | First two alerts share a group; the third starts another. The 15-minute proximity window slides when the second alert matches. |
+| `integration-fuzzy-namespace` | 0m, 16m | One group via namespace. |
+| `integration-fuzzy-alert-name` | 0m, 16m | One group via alert name across namespaces. |
+| `integration-exact-replay` | A: 0–2m, B: 16m, A: 17m | A recovers its original group, distinct from B; all source labels remain identical. |
+| `integration-subset-matching` | A: 0–2m, B: 16m, A: 17m | A recovers its original group after only its severity changes. |
+
+The tests reuse `GetAlerts`, `GetIncidents` and `BeValidIncident`, polling with
+`Eventually`. They capture group IDs as each window appears, confirm finite alerts
+and their CHA metrics disappear before a replay, and compare complete group
+partitions, including the saved IDs of resolved windows. The assertions verify
+observable output; internal matcher distances are not exposed by CHA metrics.
+The sequences alone total **96 minutes**; reconciliation, pending, scraping and
+CHA processing add overhead. The CHA time-proximity window remains **15 minutes**.
+
+### Environment ownership and safety
+
+- Supply controlled history and avoid unrelated alerts during each case. Unique
+  alert names and `test_run` identify assertions but do not isolate fuzzy namespace
+  or time-proximity matching. Serial execution does not clear previous groups.
+- An Analyzer restart can reload previous Prometheus history. Tests never delete
+  application data or reset CHA/Prometheus to obtain a passing result.
+- These are synthetic aggregation tests, not tests of actual etcd/storage failures
+  or exporter behavior. They do not deliberately break cluster components.
+- Prepare non-notifying Alertmanager routing or a silence for
+  `test_type="incident-grouping-long"` before opting in. Otherwise test alerts can
+  reach the existing receivers. The tests do not change Alertmanager configuration.
+
+Before each case, cleanup removes only previous rules matching both
+`test-type=incident-grouping-long` and that case's `grouping-case` label.
+For the current run, `DeferCleanup` is registered before Apply: on success, failure
+or timeout it removes only that run's named PrometheusRule, then waits for its
+pending/firing alerts, recording clock and current CHA metrics to disappear.
+The clock check prevents declaring cleanup complete while a loaded rule could
+still generate future alerts. Deletion/disappearance gets one minute, metric
+reconciliation five minutes, and the cleanup node has its own seven-minute timeout
+and fresh context, independent of a cancelled spec context. Cleanup adds this
+reconciliation time to each case; the two-hour suite timeout setting is unchanged.
+When using `go test`, leave room for cleanup in its outer timeout: for example,
+`-timeout=50m` with `-ginkgo.timeout=40m`, or `-timeout=2h10m` with a two-hour Ginkgo
+suite timeout. An outer process timeout can otherwise kill the runner during cleanup.
+
+Historical Prometheus samples and retained CHA groups are not erased, and no
+Alertmanager configuration or data is deleted. Cleanup failures fail the test.
+A forcibly killed runner (`SIGKILL`) cannot run cleanup; manual recovery remains
+available for old or interrupted runs:
+
+```bash
+oc delete prometheusrule -n openshift-monitoring -l test-type=incident-grouping-long
+```
+
+### Local verification without a cluster
+
+```bash
+# Validate rendered fixtures; also exercise all time windows with promtool if installed.
+go test ./test/integration/fixtures -run TestGroupingRuleFixtures -v
+
+# Verify cleanup-state queries with a simulated loader.
+go test ./test/integration/framework -run TestHasGroupingData -v
+
+# Compile the integration suite without invoking BeforeSuite or contacting a cluster.
+go test ./test/integration/... -run '^$'
+```
+
+The fixture test does not install promtool. If unavailable, it reports that rule
+engine evaluation was skipped; YAML and alert-identity checks still run.
 
 ## Requirements
 
 - OpenShift cluster access (`oc login` required)
-- Go 1.26+
-- Permissions to create resources in `openshift-monitoring` namespace
+- Go 1.26+ (as required by `go.mod`)
+- Permissions to create, read and delete resources in `openshift-monitoring` namespace
+  (the grouping suite deletes its PrometheusRule before each case and during cleanup)
 - PrometheusRule CRD available (standard OpenShift installation)
 
 ## Test Prerequisites
 
-Before running tests, ensure Thanos querier is accessible:
+Before running tests, ensure `THANOS_URL` points to the cluster's Thanos/Prometheus
+and can query both `ALERTS` and `cluster_health_components_map`. For example, forward
+the Thanos pod's HTTP port to a free local port in a separate terminal:
 
 ```bash
-# Start port-forward to Thanos (required for Prometheus client)
-make proxy
+oc -n openshift-monitoring port-forward \
+  "$(oc -n openshift-monitoring get pod \
+    -l app.kubernetes.io/instance=thanos-querier \
+    -o jsonpath='{.items[0].metadata.name}')" \
+  9095:9090
 ```
 
-This runs `oc port-forward -n openshift-monitoring svc/thanos-querier 9090:9091` in the background and is required for tests to query cluster metrics.
+Set `THANOS_URL=http://127.0.0.1:9095` for the test command below. Choose a free local
+port rather than accidentally querying the Docker debugging Prometheus on port 9090.
+`make proxy` is an optional helper, not a prerequisite.
 
-## Test Lifecycle
+## Deployment/crashloop test lifecycle
 
-Integration tests follow a specific resource lifecycle pattern:
+The grouping tests use the automatic cleanup described above. Existing
+deployment/crashloop tests retain their resource lifecycle pattern:
 
 1. **Resource Creation**: Each test creates resources with unique names (timestamp-based suffix)
-2. **No Automatic Cleanup**: Resources are intentionally left running after tests for inspection
+2. **No Automatic Cleanup (deployment/crashloop only)**: Resources are intentionally left running after tests for inspection
 3. **Pre-Test Cleanup**: Each test's `BeforeEach` removes its own resources from previous runs
 4. **Manual Cleanup**: Remove all test resources with:
    ```bash
@@ -48,9 +233,33 @@ This approach allows you to inspect resources after test completion while preven
 
 ## Configuration
 
-Override defaults via environment variables:
+Use ordinary environment variables directly, regardless of how the tests are launched:
 
 ```bash
-CHA_IMAGE=quay.io/myorg/cluster-health-analyzer:dev make deploy-integration
-CHA_IMAGE=quay.io/myorg/cluster-health-analyzer:dev make test-integration
+NAMESPACE=openshift-cluster-health-analyzer \
+DEPLOYMENT_NAME=cluster-health-analyzer \
+THANOS_URL=http://127.0.0.1:9095 \
+go run github.com/onsi/ginkgo/v2/ginkgo -v \
+  --label-filter='!stress&&!stress-simulate&&!long' ./test/integration/...
 ```
+
+Defaults are `NAMESPACE=openshift-cluster-health-analyzer`,
+`DEPLOYMENT_NAME=cluster-health-analyzer` and `THANOS_URL=http://localhost:9090`.
+`NAMESPACE` and `DEPLOYMENT_NAME` identify the existing CHA deployment for the
+standard deployment/crashloop specs and their diagnostics. They are not required
+when running only grouping specs. Test rules are still created in
+`openshift-monitoring`. For example, run one grouping case without deployment settings:
+
+```bash
+THANOS_URL=http://127.0.0.1:9095 \
+go run github.com/onsi/ginkgo/v2/ginkgo -v \
+  --label-filter='grouping && integration-fuzzy-namespace' --timeout=40m \
+  ./test/integration/tests
+```
+
+The URL selects the metrics backend; deployment name/namespace are not query filters.
+`oc` uses the current context and normal `KUBECONFIG` mechanism. Configure existing
+authentication for authenticated Thanos endpoints; no credentials need to be printed
+or placed in command arguments. In direct Go/Ginkgo runs, `CHA_IMAGE` is used only
+for the standard specs' expected-image diagnostic. The self-contained Make target
+also uses it to select an existing image instead of building the checkout.

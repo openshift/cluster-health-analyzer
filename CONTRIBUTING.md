@@ -57,6 +57,12 @@ Prerequisites:
 make test-integration
 ```
 
+For the long grouping scenarios, `make test-integration-long` builds the current
+checkout in OpenShift, deploys it, starts monitoring proxies and runs the suite.
+Set `CHA_IMAGE` to skip the build and deploy a pipeline-provided image instead.
+See [integration test documentation](test/integration/README.md) for permissions,
+notification safety and cleanup. This opt-in suite takes roughly two hours.
+
 Running integration tests is recommended for all PRs.
 
 ### CI
