@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,26 +29,54 @@ var _ = BeforeSuite(func() {
 
 	By("Loading test configuration")
 	cfg = framework.LoadConfig()
-	GinkgoWriter.Printf("Testing deployment: %s/%s\n", cfg.Namespace, cfg.DeploymentName)
-	GinkgoWriter.Printf("Expected image: %s\n", cfg.Image)
 
 	By("Initializing cluster client")
 	cluster = framework.NewCluster(cfg.Namespace)
+})
 
+var _ = BeforeEach(func() {
+	if !requiresCHADeployment(CurrentSpecReport().Labels()) {
+		return
+	}
+	GinkgoWriter.Printf("Testing deployment: %s/%s\n", cfg.Namespace, cfg.DeploymentName)
+	GinkgoWriter.Printf("Expected image: %s\n", cfg.Image)
 	By("Verifying deployment exists (pre-flight check)")
 	available, err := cluster.IsDeploymentAvailable(ctx, cfg.DeploymentName)
 	Expect(err).NotTo(HaveOccurred(),
-		"Deployment %s/%s not found. Did you run 'make deploy-integration' first?",
+		"Deployment %s/%s not found. Ensure CHA is deployed and NAMESPACE/DEPLOYMENT_NAME identify the existing deployment.",
 		cfg.Namespace, cfg.DeploymentName)
 	Expect(available).To(BeTrue(), "Deployment is not available")
 })
 
-var _ = AfterSuite(func() {
-	if CurrentSpecReport().Failed() {
-		By("Collecting debug information due to test failure")
+var _ = AfterEach(func() {
+	if CurrentSpecReport().Failed() && requiresCHADeployment(CurrentSpecReport().Labels()) {
+		By("Collecting deployment debug information due to test failure")
 		collectDebugInfo()
 	}
 })
+
+func requiresCHADeployment(labels []string) bool {
+	return !slices.Contains(labels, "grouping")
+}
+
+func TestDeploymentRequirement(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		want   bool
+	}{
+		{"standard", nil, true},
+		{"deployment", []string{"deployment"}, true},
+		{"grouping", []string{"long", "grouping", "integration-fuzzy-namespace"}, false},
+		{"other long", []string{"long"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := requiresCHADeployment(tc.labels); got != tc.want {
+				t.Fatalf("requiresCHADeployment(%v) = %t, want %t", tc.labels, got, tc.want)
+			}
+		})
+	}
+}
 
 func collectDebugInfo() {
 	if cluster == nil {

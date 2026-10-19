@@ -1,0 +1,187 @@
+# Mirrors the five debugging UI scenarios; offsets remain real minutes.
+# Group members are zero-based alert-window indexes, including expired windows.
+scenarios:
+  - id: integration-time-proximity
+    name: integration-time-proximity — etcd/API degradation and an independent storage fault
+    alerts:
+      - name: etcdHighFsyncDurations
+        delay: 0s
+        duration: -1
+        severity: warning
+        namespace: openshift-etcd
+        labels:
+          job: etcd
+          service: etcd
+          pod: etcd-master-0
+          container: etcd
+          node: master-0
+      - name: KubeAPITerminatedRequests
+        delay: 14m
+        duration: -1
+        severity: warning
+        namespace: openshift-kube-apiserver
+        labels:
+          job: kube-apiserver
+          service: kubernetes
+      - name: KubePersistentVolumeErrors
+        delay: 16m
+        duration: -1
+        severity: warning
+        namespace: openshift-storage
+        labels:
+          job: kube-state-metrics
+          persistentvolume: pvc-ceph-data-0
+    checkpoints:
+      - after: 14m
+        groups:
+          - - 0
+            - 1
+      - after: 30m
+        groups:
+          - - 0
+            - 1
+          - - 2
+  - id: integration-fuzzy-namespace
+    name: integration-fuzzy-namespace — etcd quorum degradation
+    alerts:
+      - name: etcdHighCommitDurations
+        delay: 0s
+        duration: -1
+        severity: warning
+        namespace: openshift-etcd
+        labels:
+          job: etcd
+          service: etcd
+          pod: etcd-master-0
+          container: etcd
+          node: master-0
+      - name: etcdMembersDown
+        delay: 16m
+        duration: -1
+        severity: critical
+        namespace: openshift-etcd
+        labels:
+          job: etcd
+          service: etcd
+          pod: etcd-master-0
+          container: etcd
+          node: master-0
+    checkpoints:
+      - after: 16m
+        groups:
+          - - 0
+            - 1
+  - id: integration-fuzzy-alert-name
+    name: integration-fuzzy-alert-name — worker instability across ingress and monitoring
+    alerts:
+      - name: KubePodNotReady
+        delay: 0s
+        duration: -1
+        severity: warning
+        namespace: openshift-ingress
+        labels:
+          job: kube-state-metrics
+          service: router-default
+          pod: router-default-7d9b6c8f5c-2x4mn
+          node: worker-0
+      - name: KubePodNotReady
+        delay: 16m
+        duration: -1
+        severity: warning
+        namespace: openshift-monitoring
+        labels:
+          job: kube-state-metrics
+          service: prometheus-k8s
+          pod: prometheus-k8s-0
+          node: worker-0
+    checkpoints:
+      - after: 16m
+        groups:
+          - - 0
+            - 1
+  - id: integration-exact-replay
+    name: integration-exact-replay — recurrent kube-apiserver crash loop
+    alerts:
+      - name: KubePodCrashLooping
+        delay: 0s
+        duration: 2m
+        severity: warning
+        namespace: openshift-kube-apiserver
+        labels:
+          job: kube-state-metrics
+          service: kube-state-metrics
+          pod: kube-apiserver-master-0
+          container: kube-apiserver
+          node: master-0
+      - name: KubePersistentVolumeErrors
+        delay: 16m
+        duration: -1
+        severity: warning
+        namespace: openshift-storage
+        labels:
+          job: kube-state-metrics
+          persistentvolume: pvc-ceph-data-0
+      - name: KubePodCrashLooping
+        delay: 1m
+        duration: -1
+        severity: warning
+        namespace: openshift-kube-apiserver
+        labels:
+          job: kube-state-metrics
+          service: kube-state-metrics
+          pod: kube-apiserver-master-0
+          container: kube-apiserver
+          node: master-0
+    checkpoints:
+      - after: 16m
+        groups:
+          - - 0
+          - - 1
+      - after: 17m
+        groups:
+          - - 0
+            - 2
+          - - 1
+  - id: integration-subset-matching
+    name: integration-subset-matching — etcd disk-latency severity escalation
+    alerts:
+      - name: etcdHighFsyncDurations
+        delay: 0s
+        duration: 2m
+        severity: warning
+        namespace: openshift-etcd
+        labels:
+          job: etcd
+          service: etcd
+          pod: etcd-master-0
+          container: etcd
+          node: master-0
+      - name: KubePersistentVolumeErrors
+        delay: 16m
+        duration: -1
+        severity: warning
+        namespace: openshift-storage
+        labels:
+          job: kube-state-metrics
+          persistentvolume: pvc-ceph-data-0
+      - name: etcdHighFsyncDurations
+        delay: 1m
+        duration: -1
+        severity: critical
+        namespace: openshift-etcd
+        labels:
+          job: etcd
+          service: etcd
+          pod: etcd-master-0
+          container: etcd
+          node: master-0
+    checkpoints:
+      - after: 16m
+        groups:
+          - - 0
+          - - 1
+      - after: 17m
+        groups:
+          - - 0
+            - 2
+          - - 1
