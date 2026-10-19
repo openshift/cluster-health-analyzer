@@ -53,7 +53,7 @@ undeploy-integration:
 ## test-integration> run integration tests (assumes deployment exists)
 .PHONY: test-integration
 test-integration:
-	$(GINKGO) -v --label-filter="!stress&&!stress-simulate" ./test/integration/...
+	$(GINKGO) -v --label-filter="!stress&&!stress-simulate&&!long" ./test/integration/...
 
 # Stress test configuration
 export STRESS_ALERT_COUNT ?= 500
@@ -64,6 +64,11 @@ export STRESS_INCIDENT_TIMEOUT_MIN ?= 10
 .PHONY: test-stress-simulate
 test-stress-simulate:
 	$(GINKGO) -v --label-filter="stress-simulate" ./test/integration/...
+
+## test-integration-long> run opt-in serial grouping scenarios against the existing stack
+.PHONY: test-integration-long
+test-integration-long:
+	$(GINKGO) -v --label-filter=long --timeout=2h ./test/integration/tests
 
 ## help-integration> show integration testing workflow and related targets
 .PHONY: help-integration
@@ -76,8 +81,9 @@ help-integration:
 	@echo ''
 	@echo '  Run tests:'
 	@echo '    make deploy-integration         - deploy to cluster'
-	@echo '    make test-integration           - run integration tests'
+	@echo '    make test-integration           - run standard tests (stress and long excluded)'
 	@echo '    make test-stress-simulate       - run stress tests with simulated alerts'
+	@echo '    make test-integration-long      - run five serial grouping scenarios (up to 2h)'
 	@echo '    make undeploy-integration       - cleanup deployment'
 	@echo ''
 	@echo '  Environment variables:'

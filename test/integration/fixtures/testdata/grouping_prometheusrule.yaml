@@ -1,0 +1,32 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ printf "%q" .RuleName }}
+  namespace: openshift-monitoring
+  labels:
+    app.kubernetes.io/name: kube-prometheus
+    app.kubernetes.io/part-of: openshift-monitoring
+    prometheus: k8s
+    role: alert-rules
+    test-type: {{ printf "%q" .TestType }}
+    grouping-case: {{ printf "%q" .CaseID }}
+spec:
+  groups:
+    - name: {{ printf "%q" .RuleName }}
+      interval: 15s
+      rules:
+        - record: cha_integration_start_seconds
+          expr: {{ printf "%q" (printf "%s or on() vector(time())" .Clock) }}
+          labels:
+            test_run: {{ printf "%q" .RunID }}
+{{- range .Rules }}
+        - alert: {{ printf "%q" .Alert }}
+          expr: {{ printf "%q" .Expr }}
+          for: 30s
+          labels:
+{{- range $key, $value := .Labels }}
+            {{ $key }}: {{ printf "%q" $value }}
+{{- end }}
+          annotations:
+            summary: {{ printf "%q" (printf "Synthetic incident grouping test: %s" .Alert) }}
+{{- end }}
