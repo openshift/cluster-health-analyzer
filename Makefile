@@ -1,6 +1,6 @@
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
-GOBIN=$(shell go env GOPATH)/bin
+GOBIN=$(firstword $(subst :, ,$(shell go env GOPATH)))/bin
 else
 GOBIN=$(shell go env GOBIN)
 endif
@@ -9,6 +9,7 @@ endif
 GOLANGCI_LINT := $(GOBIN)/golangci-lint
 YQ := $(or $(shell which yq 2>/dev/null),$(GOBIN)/yq)
 PROMTOOL := $(or $(shell which promtool 2>/dev/null),$(GOBIN)/promtool)
+GOVULNCHECK := $(GOBIN)/govulncheck
 
 # Include integration testing targets
 include test.mk
@@ -35,6 +36,17 @@ lint: $(GOLANGCI_LINT)
 $(GOLANGCI_LINT):
 	./hack/install-golangci-lint.sh
 
+# ----------------
+# Vulnerability Check
+# ----------------
+
+## vuln-check> run govulncheck to scan for known vulnerabilities
+.PHONY: vuln-check
+vuln-check: $(GOVULNCHECK)
+	$(GOVULNCHECK) ./...
+
+$(GOVULNCHECK):
+	./hack/install-govulncheck.sh
 
 # ----------------
 # Test
