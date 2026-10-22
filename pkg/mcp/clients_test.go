@@ -84,7 +84,8 @@ func TestNewIncidentLoadersUsesRESTCredentialsAndBackendCA(t *testing.T) {
 		Host:        "https://kubernetes.example.test",
 		BearerToken: "per-call-token",
 		TLSClientConfig: rest.TLSClientConfig{
-			CAData: []byte("invalid Kubernetes API CA"),
+			CAData:     []byte("invalid Kubernetes API CA"),
+			ServerName: "kubernetes.example.test",
 		},
 		Impersonate: rest.ImpersonationConfig{UserName: "test-user"},
 	}
