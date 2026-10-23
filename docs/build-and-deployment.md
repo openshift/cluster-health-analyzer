@@ -40,7 +40,7 @@ Two Dockerfiles exist with near-identical structure (multi-stage, CGO_ENABLED=1,
 | File | Builder Base | Purpose |
 |------|-------------|---------|
 | `Dockerfile` | `golang:1.27` | Upstream/development builds — includes `-tags strictfipsruntime` build flag but does not set `GOEXPERIMENT` |
-| `Dockerfile.konflux` | `brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.26` | Red Hat Konflux internal build pipeline — requires FIPS (sets `GOEXPERIMENT=strictfipsruntime`) |
+| `Dockerfile.konflux` | `registry.redhat.io/openshift/golang-builder:golang-builder-v1.26-rhel9` | Red Hat Konflux internal build pipeline — requires FIPS (sets `GOEXPERIMENT=strictfipsruntime`) |
 
 Both produce a `ubi9/ubi-minimal` runtime image running as non-root user `65532:65532`. The entrypoint is `/bin/cluster-health-analyzer`. The generic Dockerfile uses the standard Go builder and does not require FIPS compliance; the Konflux Dockerfile is for the internal Red Hat build pipeline and requires it.
 
