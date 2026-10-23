@@ -41,6 +41,17 @@ See the metrics at `/metrics` on the running service.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and contribution guidelines.
 
+## Evaluations
+
+To run MCP tool evaluations locally with [mcpchecker](https://github.com/mcpchecker/mcpchecker):
+
+```
+make install-mcpchecker
+make run-evals
+```
+
+See [evals/mcpchecker/README.md](evals/mcpchecker/README.md) for full instructions.
+
 ## Documentation
 
 See [docs/](docs/) for detailed architecture and subsystem documentation.

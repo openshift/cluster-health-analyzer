@@ -1,0 +1,60 @@
+kind: Eval
+metadata:
+  name: "cluster-health-tools"
+
+config:
+  agent:
+    type: "builtin.llm-agent"
+    model: "openai:gpt-5-nano"
+
+  mcpConfigFile: mcp-config.yaml
+
+  llmJudge:
+    ref:
+      type: builtin.llm-agent
+      model: "openai:gpt-5-nano"
+
+  taskSets:
+    # Smoke test
+    - path: tasks/incidents/backend-reachability.yaml
+      assertions:
+        toolsUsed:
+          - server: cluster-health
+            tool: get_incidents
+        minToolCalls: 1
+        maxToolCalls: 5
+
+    - path: tasks/incidents/list-incidents.yaml
+      assertions:
+        toolsUsed:
+          - server: cluster-health
+            tool: get_incidents
+        minToolCalls: 1
+        maxToolCalls: 5
+
+    # Parameter usage: min_severity filter
+    - path: tasks/incidents/critical-incidents.yaml
+      assertions:
+        toolsUsed:
+          - server: cluster-health
+            tool: get_incidents
+        minToolCalls: 1
+        maxToolCalls: 5
+
+    # Parameter usage: time_range filter
+    - path: tasks/incidents/recent-incidents.yaml
+      assertions:
+        toolsUsed:
+          - server: cluster-health
+            tool: get_incidents
+        minToolCalls: 1
+        maxToolCalls: 5
+
+    # Multi-step reasoning (hard)
+    - path: tasks/incidents/cluster-health-summary.yaml
+      assertions:
+        toolsUsed:
+          - server: cluster-health
+            tool: get_incidents
+        minToolCalls: 1
+        maxToolCalls: 10
