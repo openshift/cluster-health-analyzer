@@ -55,10 +55,12 @@ test-verbose:
 # Develop
 # ----------------
 
-## proxy> port-forward to thanos-querier (requires oc login first)
+## proxy> port-forward to thanos-querier and alertmanager (requires oc login first)
 .PHONY: proxy
 proxy:
-	./hack/listen-thanos.sh
+	./hack/listen-thanos.sh & \
+	./hack/listen-alertmanager.sh & \
+	wait
 
 ## run> run a test-only local server (requires prometheus and alertmanager runnning)
 .PHONY: run
