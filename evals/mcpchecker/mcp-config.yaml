@@ -1,0 +1,10 @@
+mcpServers:
+  cluster-health:
+    type: http
+    url: http://localhost:8085
+    # The MCP server parses the kubernetes-authorization header on every
+    # request. The token is never validated when the server runs with
+    # --disable-auth-for-testing, so a dummy value silences the parse error.
+    headers:
+      kubernetes-authorization: "Bearer local-eval"
+    enableAllTools: true

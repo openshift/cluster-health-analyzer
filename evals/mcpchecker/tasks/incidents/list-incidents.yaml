@@ -1,0 +1,25 @@
+kind: Task
+apiVersion: mcpchecker/v1alpha2
+metadata:
+  name: "list-incidents"
+  difficulty: easy
+  parallel: true
+  runs: 1
+  labels:
+    category: incidents
+    suite: cluster-health
+    toolType: get-incidents
+  description: |
+    Tests if the agent uses the get_incidents tool to list the current
+    firing incidents and summarizes them.
+spec:
+  verify:
+    - llmJudge:
+        contains: |
+          A list of currently firing incidents with a brief description of
+          each incident's problem, or an explicit statement that no firing
+          incidents were returned.
+  prompt:
+    inline: |
+      List the incidents currently firing in the cluster and briefly summarize
+      what is happening.
