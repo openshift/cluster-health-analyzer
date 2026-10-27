@@ -15,9 +15,25 @@ Prometheus/Alertmanager backend.
 
 `make run-evals` starts everything else automatically and stops it
 when finished: the Prometheus (thanos-querier) and Alertmanager
-port-forwards, and the MCP server (equivalent to `make run-mcp` on
-http://localhost:8085). Anything already listening on localhost:9090,
+port-forwards, the MCP server (equivalent to `make run-mcp` on
+http://localhost:8085), and the synthetic firing alerts so the evals have
+incidents to query (see below). Anything already listening on localhost:9090,
 localhost:9093 or localhost:8085 is reused as-is.
+
+## Synthetic alerts
+
+`alerts-prometheusrule.yaml` defines three always-firing alerts
+(`etcdHighFsyncDurations` and `KubePodCrashLooping` at warning severity,
+`etcdMembersDown` at critical severity) that map to known components, so
+`get_incidents` returns deterministic data. The runner applies this
+PrometheusRule to `openshift-monitoring` before the evals and removes it when
+finished, waiting until the alerts fire and cluster-health-analyzer maps them
+to components. If the rule is already applied, it is reused and left in place.
+Manual cleanup is available if a run is interrupted:
+
+```bash
+oc delete prometheusrule -n openshift-monitoring -l test-type=mcpchecker-eval
+```
 
 ## Environment Variables
 
