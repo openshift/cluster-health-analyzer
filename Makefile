@@ -9,6 +9,10 @@ endif
 GOLANGCI_LINT := $(GOBIN)/golangci-lint
 YQ := $(or $(shell which yq 2>/dev/null),$(GOBIN)/yq)
 PROMTOOL := $(or $(shell which promtool 2>/dev/null),$(GOBIN)/promtool)
+MCPCHECKER_VERSION ?= 0.0.22
+MCPCHECKER_OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
+MCPCHECKER_ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
+MCPCHECKER := bin/mcpchecker
 
 # Include integration testing targets
 include test.mk
@@ -104,3 +108,35 @@ undeploy:
 ## precommit> run linting and unit tests
 .PHONY: precommit
 precommit: lint test
+
+# ----------------
+# Evals (mcpchecker)
+# ----------------
+
+$(MCPCHECKER):
+	@echo "==> Installing mcpchecker v$(MCPCHECKER_VERSION) ($(MCPCHECKER_OS)/$(MCPCHECKER_ARCH))..."
+	@mkdir -p bin
+	@curl -fsSL -o bin/mcpchecker.zip \
+		https://github.com/mcpchecker/mcpchecker/releases/download/v$(MCPCHECKER_VERSION)/mcpchecker-$(MCPCHECKER_OS)-$(MCPCHECKER_ARCH).zip
+	@unzip -o -q bin/mcpchecker.zip -d bin
+	@rm -f bin/mcpchecker.zip
+	@chmod +x bin/mcpchecker
+	@echo "==> mcpchecker v$(MCPCHECKER_VERSION) installed to $(MCPCHECKER)"
+
+## install-mcpchecker> install mcpchecker CLI for running evals
+.PHONY: install-mcpchecker
+install-mcpchecker: $(MCPCHECKER)
+
+MCPCHECKER_EVAL_DIR := evals/mcpchecker
+RUNS ?= 1
+EVAL_CONFIG ?= eval.yaml
+
+export TASK
+export CATEGORY
+export RUNS
+export EVAL_CONFIG
+
+## run-evals> run mcpchecker evals (TASK=name, CATEGORY=..., RUNS=1); starts backends and the MCP server automatically (requires oc login and OPENAI_API_KEY)
+.PHONY: run-evals
+run-evals: $(MCPCHECKER)
+	./hack/run-mcpchecker-eval.sh

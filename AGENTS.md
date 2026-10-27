@@ -16,6 +16,8 @@ An OpenShift cluster health analysis tool that maps Prometheus alerts to high-le
 - `make run` — start server at `https://localhost:8443/metrics` with auth disabled
 - `make simulate` — generate test data from CSV scenarios
 - `make run-mcp` — start the MCP server
+- `make install-mcpchecker` — install the mcpchecker CLI for evals
+- `make run-evals` — run MCP tool evals (see [evals/mcpchecker/README.md](evals/mcpchecker/README.md))
 
 ### Deployment
 - `make deploy` / `make undeploy` — deploy/remove from cluster (requires `oc login`)
