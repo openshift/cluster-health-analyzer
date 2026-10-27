@@ -11,6 +11,9 @@
 #   CATEGORY      run all tasks with a matching category label
 #   RUNS          number of runs per task (default: 1)
 #   EVAL_CONFIG   eval config file name (default: eval.yaml)
+#
+# Creates synthetic firing alerts (evals/mcpchecker/alerts-prometheusrule.yaml)
+# so the evals have incidents to query, and removes them when finished.
 
 set -euo pipefail
 
@@ -24,10 +27,16 @@ MCPCHECKER_BIN="$ROOT_DIR/bin/mcpchecker"
 PROM_URL="http://localhost:9090"
 ALERTMANAGER_URL="http://localhost:9093"
 MCP_URL="http://localhost:8085/healthz"
+RULE_NAME="mcpchecker-eval-alerts"
 
 PIDS=()
+CREATED_RULE=0
 
 cleanup() {
+	if [ "$CREATED_RULE" = 1 ]; then
+		echo "==> Removing synthetic eval alerts"
+		oc delete prometheusrule -n openshift-monitoring -l test-type=mcpchecker-eval >/dev/null 2>&1 || true
+	fi
 	if [ "${#PIDS[@]}" -gt 0 ]; then
 		echo "==> Stopping background processes"
 		for pid in "${PIDS[@]}"; do
@@ -109,6 +118,47 @@ ensure_port_forward "$PROM_URL/-/ready" "Prometheus" ./hack/listen-thanos.sh
 ensure_port_forward "$ALERTMANAGER_URL/-/ready" "Alertmanager" ./hack/listen-alertmanager.sh
 ensure_url "$MCP_URL" "MCP server" \
 	go run -tags testonly ./main.go mcp --disable-auth-for-testing
+
+# query_value <promql> — prints the scalar value of an instant query, or 0.
+query_value() {
+	curl -sG --max-time 5 "$PROM_URL/api/v1/query" --data-urlencode "query=$1" |
+		python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(d["data"]["result"][0]["value"][1])
+except (KeyError, IndexError):
+    print("0")'
+}
+
+command -v oc >/dev/null 2>&1 || {
+	echo "Error: oc is required to create the synthetic eval alerts." >&2
+	exit 1
+}
+
+if oc get prometheusrule "$RULE_NAME" -n openshift-monitoring >/dev/null 2>&1; then
+	echo "==> Synthetic eval alerts already present, reusing them"
+else
+	echo "==> Creating synthetic eval alerts"
+	oc apply -f "$EVAL_DIR/alerts-prometheusrule.yaml"
+	CREATED_RULE=1
+fi
+
+echo "==> Waiting for synthetic alerts to fire and CHA to map them to components"
+i=1
+while :; do
+	firing=$(query_value 'count(ALERTS{test_type="mcpchecker-eval",alertstate="firing"})')
+	mapped=$(query_value 'count(cluster_health_components_map{src_alertname=~"etcdHighFsyncDurations|KubePodCrashLooping|etcdMembersDown"})')
+	if [ "${firing:-0}" -ge 3 ] 2>/dev/null && [ "${mapped:-0}" -ge 3 ] 2>/dev/null; then
+		echo "==> $firing synthetic alerts firing, $mapped mapped to components"
+		break
+	fi
+	if [ "$i" -ge 60 ]; then
+		echo "Error: synthetic alerts not ready after 5 minutes (firing=$firing mapped=$mapped)" >&2
+		exit 1
+	fi
+	i=$((i + 1))
+	sleep 5
+done
 
 cd "$EVAL_DIR"
 
