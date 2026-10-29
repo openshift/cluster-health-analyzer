@@ -83,6 +83,24 @@ func (p *PrometheusClient) GetIncidents(ctx context.Context, alertnamePattern st
 	return incidents, nil
 }
 
+// HasGroupingData checks current test data, including pending alerts and the
+// recording clock of rules not yet unloaded by Prometheus.
+func (p *PrometheusClient) HasGroupingData(ctx context.Context, alertnamePattern, runID string) (bool, error) {
+	query := fmt.Sprintf(
+		`ALERTS{alertname=~%q,test_run=%q}`+
+			` or %s{src_alertname=~%q}`+
+			` or cha_integration_start_seconds{test_run=%q}`,
+		alertnamePattern, runID,
+		processor.ClusterHealthComponentsMap, alertnamePattern,
+		runID,
+	)
+	results, err := p.loader.LoadQuery(ctx, query, time.Now())
+	if err != nil {
+		return false, fmt.Errorf("failed to query grouping cleanup state: %w", err)
+	}
+	return len(results) > 0, nil
+}
+
 // labelSetToMap converts a model.LabelSet to a plain string map.
 func labelSetToMap(ls model.LabelSet) map[string]string {
 	result := make(map[string]string, len(ls))
