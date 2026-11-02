@@ -21,7 +21,9 @@ spec:
           it prioritizes the most severe problems, identifies affected
           components, and describes causes as likely or unknown rather
           than proven. When no incidents were returned, it says so without
-          treating that as proof that the entire cluster is healthy.
+          treating that as proof that the entire cluster is healthy. The
+          assessment covers the etcdHighFsyncDurations, KubePodCrashLooping,
+          and etcdMembersDown alerts.
   prompt:
     inline: |
       What is the current health status of the cluster? Identify the most

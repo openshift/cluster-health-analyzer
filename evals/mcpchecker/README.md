@@ -29,6 +29,7 @@ localhost:9093 or localhost:8085 is reused as-is.
 PrometheusRule to `openshift-monitoring` before the evals and removes it when
 finished, waiting until the alerts fire and cluster-health-analyzer maps them
 to components. If the rule is already applied, it is reused and left in place.
+Each task's judge criteria also expect these alert names in the agent's answer.
 Manual cleanup is available if a run is interrupted:
 
 ```bash

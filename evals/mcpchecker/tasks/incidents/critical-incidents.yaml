@@ -18,7 +18,8 @@ spec:
     - llmJudge:
         contains: |
           A list of currently firing critical incidents, or an explicit
-          statement that no critical firing incidents were returned.
+          statement that no critical firing incidents were returned. The
+          firing critical incidents include the etcdMembersDown alert.
   prompt:
     inline: |
       Show me only the critical incidents currently firing in the cluster.

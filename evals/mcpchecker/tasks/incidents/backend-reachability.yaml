@@ -15,7 +15,10 @@ metadata:
 spec:
   verify:
     - llmJudge:
-        contains: "The incidents tool responded successfully."
+        contains: |
+          The incidents tool responded successfully. The listed firing
+          incidents include the etcdHighFsyncDurations, KubePodCrashLooping,
+          and etcdMembersDown alerts.
   prompt:
     inline: |
       Can the cluster-health MCP server retrieve incidents? Use its incidents

@@ -18,7 +18,9 @@ spec:
         contains: |
           A list of currently firing incidents with a brief description of
           each incident's problem, or an explicit statement that no firing
-          incidents were returned.
+          incidents were returned. The firing incidents include the
+          etcdHighFsyncDurations, KubePodCrashLooping, and etcdMembersDown
+          alerts.
   prompt:
     inline: |
       List the incidents currently firing in the cluster and briefly summarize

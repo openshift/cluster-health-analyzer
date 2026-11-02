@@ -17,7 +17,9 @@ spec:
     - llmJudge:
         contains: |
           A list of incidents returned for the last 24 hours, or an explicit
-          statement that no incidents were returned for that window.
+          statement that no incidents were returned for that window. The
+          incidents include the etcdHighFsyncDurations, KubePodCrashLooping,
+          and etcdMembersDown alerts.
   prompt:
     inline: |
       Show me the incidents from the last 24 hours in the cluster.
