@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import re
 import sys
+from pathlib import Path
 
 
 EXPECTED_ARGUMENTS = {
@@ -12,6 +14,48 @@ EXPECTED_ARGUMENTS = {
     "recent-incidents": {"time_range": 24},
     "cluster-health-summary": {},
 }
+
+# Synthetic alerts defined in alerts-prometheusrule.yaml and applied by
+# hack/run-mcpchecker-eval.sh; labelled test_type=mcpchecker-eval.
+def synthetic_alerts_from_rule():
+    """Alert name -> severity from alerts-prometheusrule.yaml, the single
+    source of truth for the synthetic eval alerts."""
+    rule = Path(__file__).with_name("alerts-prometheusrule.yaml").read_text()
+    alerts, name = {}, None
+    for line in rule.splitlines():
+        match = re.match(r"\s*- alert:\s*(\S+)", line)
+        if match:
+            name = match.group(1)
+            continue
+        match = re.match(r"\s*severity:\s*(\w+)", line)
+        if match and name and name not in alerts:
+            alerts[name] = match.group(1)
+    return alerts
+
+
+SYNTHETIC_ALERTS = synthetic_alerts_from_rule()
+
+
+def returned_synthetic_alerts(calls):
+    """Synthetic alert names returned by successful get_incidents calls."""
+    names = set()
+    for call in calls:
+        if not call.get("success") or call.get("result") is None:
+            continue
+        if call["result"].get("isError"):
+            continue
+        for content in call["result"].get("content") or []:
+            match = re.search(
+                r"<DATA>\n(.*)\n</DATA>", content.get("text") or "", re.S
+            )
+            if not match:
+                continue
+            payload = json.loads(match.group(1))
+            for incident in payload["incidents"]["items"]:
+                for alert in incident["alerts"]:
+                    if alert.get("test_type") == "mcpchecker-eval":
+                        names.add(alert["name"])
+    return names
 
 
 def verify_results(results):
@@ -60,6 +104,21 @@ def verify_results(results):
             for call in calls
         ):
             errors.append(f"{label}: no successful get_incidents response")
+
+        # Tasks filtering on min_severity can only expect alerts at or above
+        # that severity; all other tasks must see every synthetic alert.
+        min_severity = EXPECTED_ARGUMENTS.get(name, {}).get("min_severity")
+        expected = {
+            alert_name
+            for alert_name, severity in SYNTHETIC_ALERTS.items()
+            if min_severity is None or severity == min_severity
+        }
+        missing = expected - returned_synthetic_alerts(calls)
+        if missing:
+            errors.append(
+                f"{label}: synthetic alerts {sorted(missing)} "
+                "missing from get_incidents responses"
+            )
 
     return errors
 
