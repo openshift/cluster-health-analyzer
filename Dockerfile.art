@@ -1,0 +1,44 @@
+FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.26 as builder
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY cmd cmd
+COPY pkg pkg
+COPY main.go main.go
+
+ENV GOOS=${TARGETOS:-linux}
+ENV GOARCH=${TARGETARCH}
+ENV CGO_ENABLED=1
+ENV GOFLAGS=-mod=readonly
+ENV GOEXPERIMENT=strictfipsruntime
+RUN go build -tags strictfipsruntime -o /bin/cluster-health-analyzer
+
+# ART/Doozer handles base image pinning
+FROM registry.redhat.io/ubi9/ubi-minimal:latest
+
+WORKDIR /
+COPY --from=builder /bin/cluster-health-analyzer /bin/cluster-health-analyzer
+USER 65532:65532
+
+ENTRYPOINT ["/bin/cluster-health-analyzer"]
+
+ARG VERSION=v1.2.0
+LABEL com.redhat.component="coo-cluster-health-analyzer" \
+      name="cluster-observability-operator/cluster-health-analyzer-rhel9" \
+      cpe="cpe:/a:redhat:cluster_observability_operator:1.6::el9" \
+      version="${VERSION}" \
+      release="${VERSION}" \
+      vendor="Red Hat, Inc." \
+      distribution-scope="public" \
+      url="https://github.com/openshift/cluster-health-analyzer" \
+      summary="OpenShift Cluster Health Analyzer" \
+      io.openshift.tags="openshift,observability,metrics,alerts,incidents" \
+      io.k8s.display-name="COO Cluster Health Analyzer" \
+      io.k8s.description="The Cluster Health Analyzer analyzes alerts and health signals, grouping related ones" \
+      maintainer="Observability Intelligence Analytics Team <obsint-analytics@redhat.com>" \
+      description="The Cluster Health Analyzer analyzes alerts and health signals, grouping related ones"
+
