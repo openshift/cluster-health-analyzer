@@ -194,10 +194,9 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 					},
 				}
 				data, _ := json.Marshal(r)
-				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{
-						&mcp.TextContent{Text: response},
+						&mcp.TextContent{Text: string(data)},
 					},
 				}
 			}(),
@@ -372,10 +371,9 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 					},
 				}
 				data, _ := json.Marshal(r)
-				response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{
-						&mcp.TextContent{Text: response},
+						&mcp.TextContent{Text: string(data)},
 					},
 				}
 			}(),
@@ -400,7 +398,7 @@ func TestIncidentTool_IncidentsHandler(t *testing.T) {
 			assert.IsType(t, Response{}, structured)
 			data, marshalErr := json.Marshal(structured)
 			if assert.NoError(t, marshalErr) {
-				assert.Equal(t, fmt.Sprintf(getIncidentsResponseTemplate, string(data)),
+				assert.Equal(t, string(data),
 					got.Content[0].(*mcp.TextContent).Text)
 			}
 		})
