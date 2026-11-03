@@ -24,25 +24,12 @@ import (
 	"github.com/prometheus/common/model"
 )
 
-var (
-	// Format response with instructions for better LLM interpretation
-	getIncidentsResponseTemplate = `<DATA>
-%s
-</DATA>
-<INSTRUCTIONS>
-- An incident is a group of related alerts. Base your analysis on the alerts to understand the incident. 
-- Don't confuse or mix the concepts of incident and alert during your explanation.
-- For each incident, analyze its alerts to identify the affected components and the core problem. 
-- Whenever you print an incident ID, add also a short one-sentence summary of the incident (e.g. "etcd degradation", "ingress failure")
-- If the user asks about a problem you cannot find in the data, do not guess. State that you cannot find the cause and simply list the incidents.
-</INSTRUCTIONS>`
-)
-
 const (
 	// GetIncidentsDescription describes the get_incidents MCP tool.
 	GetIncidentsDescription = `List the current firing incidents in the cluster. 
 		One incident is a group of related alerts that are likely triggered by the same root cause.
 		Use this tool to analyze the cluster health status and determine why a component is failing or degraded.
+		Analyze the alerts within each incident to identify affected components and understand the reported problem.
 		`
 
 	getIncidentsToolName  = "get_incidents"
@@ -224,10 +211,9 @@ func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsPara
 		return nil, nil, err
 	}
 
-	response := fmt.Sprintf(getIncidentsResponseTemplate, string(data))
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: response},
+			&mcp.TextContent{Text: string(data)},
 		},
 	}, r, nil
 }
