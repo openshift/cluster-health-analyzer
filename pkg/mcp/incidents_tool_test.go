@@ -643,6 +643,67 @@ func TestTransformPromValueToIncident(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Firing incident severity is derived from firing alerts only",
+			testInput: prom.RangeVector{
+				{
+					Metric: model.LabelSet{
+						"src_alertname": "Alert1",
+						"group_id":      "1",
+						"src_severity":  "warning",
+						"component":     "console",
+						"src_namespace": "openshift-console",
+					},
+					Samples: []model.SamplePair{
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-25 * time.Minute),
+						},
+						{
+							Value:     1,
+							Timestamp: model.Now().Add(-1 * time.Minute),
+						},
+					},
+				},
+				{
+					Metric: model.LabelSet{
+						"src_alertname": "Alert2",
+						"group_id":      "1",
+						"src_severity":  "critical",
+						"component":     "monitoring",
+						"src_namespace": "openshift-monitoring",
+					},
+					Samples: []model.SamplePair{
+						{
+							Value:     2,
+							Timestamp: model.Now().Add(-25 * time.Minute),
+						},
+						{
+							Value:     2,
+							Timestamp: model.Now().Add(-11 * time.Minute),
+						},
+					},
+				},
+			},
+			expectedIncidents: map[string]Incident{
+				"1": {
+					GroupId:            "1",
+					Severity:           "warning",
+					Status:             "firing",
+					StartTime:          time.Now().Add(-25 * time.Minute).Format(time.RFC3339),
+					AffectedComponents: []string{"console", "monitoring"},
+					ComponentsSet:      map[string]struct{}{"monitoring": {}, "console": {}},
+					Alerts: []model.LabelSet{
+						{"alertname": "Alert1", "namespace": "openshift-console", "severity": "warning"},
+						{"alertname": "Alert2", "namespace": "openshift-monitoring", "severity": "critical"},
+					},
+					AlertsSet: map[string]struct{}{
+						"{alertname=\"Alert1\", namespace=\"openshift-console\", severity=\"warning\"}":     {},
+						"{alertname=\"Alert2\", namespace=\"openshift-monitoring\", severity=\"critical\"}": {},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1190,6 +1251,146 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 			}
 
 			assert.ElementsMatch(t, tt.expectedIncidents, incidents)
+		})
+	}
+}
+
+func TestReconcileFiringSeverity(t *testing.T) {
+	endTime := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
+	tests := []struct {
+		name              string
+		incidents         []Incident
+		expectedIncidents []Incident
+	}{
+		{
+			name: "Firing critical alert raises the severity of a firing incident",
+			incidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Warning.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "firing"},
+						{"name": "Alert2", "namespace": "ns", "severity": "critical", "status": "firing"},
+					},
+				},
+			},
+			expectedIncidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Critical.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "firing"},
+						{"name": "Alert2", "namespace": "ns", "severity": "critical", "status": "firing"},
+					},
+				},
+			},
+		},
+		{
+			name: "Resolved alerts do not affect the severity of a firing incident",
+			incidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Warning.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "firing"},
+						{"name": "Alert2", "namespace": "ns", "severity": "critical", "status": "resolved"},
+					},
+				},
+			},
+			expectedIncidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Warning.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "firing"},
+						{"name": "Alert2", "namespace": "ns", "severity": "critical", "status": "resolved"},
+					},
+				},
+			},
+		},
+		{
+			name: "Firing alerts do not lower the severity of a firing incident",
+			incidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Critical.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "firing"},
+					},
+				},
+			},
+			expectedIncidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Critical.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "firing"},
+					},
+				},
+			},
+		},
+		{
+			name: "Resolved incidents are not modified",
+			incidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Critical.String(),
+					Status:   "resolved",
+					EndTime:  endTime,
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "critical", "status": "firing"},
+					},
+				},
+			},
+			expectedIncidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Critical.String(),
+					Status:   "resolved",
+					EndTime:  endTime,
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "critical", "status": "firing"},
+					},
+				},
+			},
+		},
+		{
+			name: "Firing incident without firing alerts keeps its severity",
+			incidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Warning.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "resolved"},
+						{"name": "Alert2", "namespace": "ns", "severity": "warning"},
+					},
+				},
+			},
+			expectedIncidents: []Incident{
+				{
+					GroupId:  "1",
+					Severity: processor.Warning.String(),
+					Status:   "firing",
+					Alerts: []model.LabelSet{
+						{"name": "Alert1", "namespace": "ns", "severity": "warning", "status": "resolved"},
+						{"name": "Alert2", "namespace": "ns", "severity": "warning"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reconcileFiringSeverity(tt.incidents)
+			assert.Equal(t, tt.expectedIncidents, tt.incidents)
 		})
 	}
 }
