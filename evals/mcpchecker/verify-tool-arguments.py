@@ -45,12 +45,10 @@ def returned_synthetic_alerts(calls):
         if call["result"].get("isError"):
             continue
         for content in call["result"].get("content") or []:
-            match = re.search(
-                r"<DATA>\n(.*)\n</DATA>", content.get("text") or "", re.S
-            )
-            if not match:
+            try:
+                payload = json.loads(content.get("text") or "")
+            except json.JSONDecodeError:
                 continue
-            payload = json.loads(match.group(1))
             for incident in payload["incidents"]["items"]:
                 for alert in incident["alerts"]:
                     if alert.get("test_type") == "mcpchecker-eval":
