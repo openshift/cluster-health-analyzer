@@ -1,0 +1,5 @@
+inheritance: true
+reviews:
+  auto_review:
+    base_branches:
+      - '^release-coo-1\.6$'
