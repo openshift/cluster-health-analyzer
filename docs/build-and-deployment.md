@@ -12,7 +12,8 @@
 - `manifests/mcp/`: YAML manifests for the MCP server deployment
 - `hack/listen-thanos.sh`: port-forward to thanos-querier pod on port 9090
 - `hack/listen-alertmanager.sh`: port-forward to alertmanager pod on port 9093
-- `hack/deploy-integration.sh`: patches manifests with `CHA_IMAGE` and deploys to cluster
+- `hack/deploy-integration.sh`: patches manifests with `CHA_IMAGE`, deploys and waits for rollout
+- `hack/test-integration-long.sh`: builds in OpenShift (or uses `CHA_IMAGE`), deploys and owns monitoring proxies for the long suite; see [integration usage](../test/integration/README.md)
 - `hack/install-golangci-lint.sh`, `hack/install-promtool.sh`, `hack/install-yq.sh`: tool installers
 
 ## Patterns & Conventions

@@ -192,14 +192,11 @@ func (c *Cluster) IsPodCrashLooping(ctx context.Context, selector string) (bool,
 
 // --- Diagnostics ---
 
-// GetPodStatus returns a human-readable status of pods matching the selector.
+// GetPodStatus returns an allow-listed pod summary (name, phase, restarts,
+// waiting reason). Raw pod output is avoided because it can embed sensitive data.
 func (c *Cluster) GetPodStatus(ctx context.Context, selector string) (string, error) {
-	return c.output(ctx, "get", "pods", "-l", selector, "-o", "wide")
-}
-
-// GetLogs retrieves logs from a resource (e.g., "deployment/my-app").
-func (c *Cluster) GetLogs(ctx context.Context, resourceRef string, tailLines int) (string, error) {
-	return c.output(ctx, "logs", resourceRef, fmt.Sprintf("--tail=%d", tailLines))
+	return c.output(ctx, "get", "pods", "-l", selector,
+		"-o", `jsonpath={range .items[*]}{.metadata.name}{" phase="}{.status.phase}{" restarts="}{.status.containerStatuses[*].restartCount}{" waiting="}{.status.containerStatuses[*].state.waiting.reason}{"\n"}{end}`)
 }
 
 // --- Deployment Management ---

@@ -19,7 +19,7 @@ GINKGO := go run github.com/onsi/ginkgo/v2/ginkgo $(GINKGO_COLOR)
 export GOFLAGS=-mod=readonly
 
 $(YQ):
-	./hack/install-yq.sh
+	INSTALL_DIR="$(dir $(YQ))" ./hack/install-yq.sh
 
 $(PROMTOOL):
 	./hack/install-promtool.sh
@@ -29,7 +29,8 @@ $(PROMTOOL):
 install-integration-test-tools: $(YQ) $(PROMTOOL)
 
 # Default values for integration tests
-export CHA_IMAGE ?= quay.io/openshiftanalytics/cluster-health-analyzer:latest
+# Empty means build the current sources for the self-contained long-test target.
+export CHA_IMAGE ?=
 export MANIFESTS_PATH ?= manifests/backend
 export DEPLOYMENT_NAME ?= cluster-health-analyzer
 export NAMESPACE ?= openshift-cluster-health-analyzer
@@ -53,7 +54,7 @@ undeploy-integration:
 ## test-integration> run integration tests (assumes deployment exists)
 .PHONY: test-integration
 test-integration:
-	$(GINKGO) -v --label-filter="!stress&&!stress-simulate" ./test/integration/...
+	$(GINKGO) -v --label-filter="!stress&&!stress-simulate&&!long" ./test/integration/...
 
 # Stress test configuration
 export STRESS_ALERT_COUNT ?= 500
@@ -64,6 +65,11 @@ export STRESS_INCIDENT_TIMEOUT_MIN ?= 10
 .PHONY: test-stress-simulate
 test-stress-simulate:
 	$(GINKGO) -v --label-filter="stress-simulate" ./test/integration/...
+
+## test-integration-long> build, deploy, start proxies and run serial grouping scenarios
+.PHONY: test-integration-long
+test-integration-long: $(YQ)
+	PATH="$(dir $(YQ)):$$PATH" bash ./hack/test-integration-long.sh
 
 ## help-integration> show integration testing workflow and related targets
 .PHONY: help-integration
@@ -76,8 +82,9 @@ help-integration:
 	@echo ''
 	@echo '  Run tests:'
 	@echo '    make deploy-integration         - deploy to cluster'
-	@echo '    make test-integration           - run integration tests'
+	@echo '    make test-integration           - run standard tests (stress and long excluded)'
 	@echo '    make test-stress-simulate       - run stress tests with simulated alerts'
+	@echo '    make test-integration-long      - build, deploy and run grouping scenarios (up to 2h)'
 	@echo '    make undeploy-integration       - cleanup deployment'
 	@echo ''
 	@echo '  Environment variables:'

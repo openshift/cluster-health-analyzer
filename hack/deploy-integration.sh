@@ -44,18 +44,28 @@ echo "NAMESPACE: ${NAMESPACE}"
 
 # Create temp directory for patched manifests
 TEMP_MANIFESTS=$(mktemp -d)
-trap "rm -rf ${TEMP_MANIFESTS}" EXIT
+trap 'rm -rf "${TEMP_MANIFESTS}"' EXIT
 
 echo "=== Patching manifests with image ==="
 cp "${MANIFESTS_PATH}"/*.yaml "${TEMP_MANIFESTS}/"
-yq eval -i ".spec.template.spec.containers[0].image = \"${CHA_IMAGE}\"" \
+export CHA_IMAGE
+yq eval -i '.spec.template.spec.containers[0].image = strenv(CHA_IMAGE)' \
     "${TEMP_MANIFESTS}/05_deployment.yaml"
+
+# Overrides must identify the resources being applied, not a different deployment.
+if [[ "$(yq '.metadata.namespace' "${TEMP_MANIFESTS}/05_deployment.yaml")" != "${NAMESPACE}" ||
+      "$(yq '.metadata.name' "${TEMP_MANIFESTS}/05_deployment.yaml")" != "${DEPLOYMENT_NAME}" ]]; then
+    echo "Error: NAMESPACE and DEPLOYMENT_NAME must match MANIFESTS_PATH." >&2
+    exit 1
+fi
 
 echo "=== Deploying cluster-health-analyzer ==="
 oc apply -f "${TEMP_MANIFESTS}/"
 
 echo "=== Waiting for deployment to be ready ==="
-oc wait --for=condition=available --timeout=300s \
+# A reused tag must be pulled again; Available alone can describe the old pods.
+oc rollout restart "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}"
+oc rollout status --timeout=300s \
     "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}"
 
 echo "=== Checking pod status ==="

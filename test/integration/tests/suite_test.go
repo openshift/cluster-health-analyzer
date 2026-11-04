@@ -3,7 +3,9 @@ package tests
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -28,28 +30,58 @@ var _ = BeforeSuite(func() {
 
 	By("Loading test configuration")
 	cfg = framework.LoadConfig()
-	GinkgoWriter.Printf("Testing deployment: %s/%s\n", cfg.Namespace, cfg.DeploymentName)
-	GinkgoWriter.Printf("Expected image: %s\n", cfg.Image)
 
 	By("Initializing cluster client")
 	cluster = framework.NewCluster(cfg.Namespace)
+})
 
+var _ = BeforeEach(func(specCtx SpecContext) {
+	if !requiresCHADeployment(CurrentSpecReport().Labels()) {
+		return
+	}
+	GinkgoWriter.Printf("Testing deployment: %s/%s\n", cfg.Namespace, cfg.DeploymentName)
+	GinkgoWriter.Printf("Expected image: %s\n", cfg.Image)
 	By("Verifying deployment exists (pre-flight check)")
-	available, err := cluster.IsDeploymentAvailable(ctx, cfg.DeploymentName)
+	available, err := cluster.IsDeploymentAvailable(specCtx, cfg.DeploymentName)
 	Expect(err).NotTo(HaveOccurred(),
-		"Deployment %s/%s not found. Did you run 'make deploy-integration' first?",
+		"Deployment %s/%s not found. Ensure CHA is deployed and NAMESPACE/DEPLOYMENT_NAME identify the existing deployment.",
 		cfg.Namespace, cfg.DeploymentName)
 	Expect(available).To(BeTrue(), "Deployment is not available")
-})
+}, NodeTimeout(2*time.Minute))
 
-var _ = AfterSuite(func() {
+var _ = AfterEach(func(specCtx SpecContext) {
+	// Debug collection needs no deployment pre-flight; it returns early on errors,
+	// so run it for every failed spec, including grouping ones.
 	if CurrentSpecReport().Failed() {
-		By("Collecting debug information due to test failure")
-		collectDebugInfo()
+		By("Collecting deployment debug information due to test failure")
+		collectDebugInfo(specCtx)
 	}
-})
+}, NodeTimeout(2*time.Minute))
 
-func collectDebugInfo() {
+func requiresCHADeployment(labels []string) bool {
+	return !slices.Contains(labels, "grouping")
+}
+
+func TestDeploymentRequirement(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		want   bool
+	}{
+		{"standard", nil, true},
+		{"deployment", []string{"deployment"}, true},
+		{"grouping", []string{"long", "grouping", "integration-fuzzy-namespace"}, false},
+		{"other long", []string{"long"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := requiresCHADeployment(tc.labels); got != tc.want {
+				t.Fatalf("requiresCHADeployment(%v) = %t, want %t", tc.labels, got, tc.want)
+			}
+		})
+	}
+}
+
+func collectDebugInfo(ctx context.Context) {
 	if cluster == nil {
 		return
 	}
@@ -70,11 +102,7 @@ func collectDebugInfo() {
 		return
 	}
 	GinkgoWriter.Printf("\n=== Pod Status ===\n%s\n", status)
-
-	logs, err := cluster.GetLogs(ctx, "deployment/"+cfg.DeploymentName, 100)
-	if err != nil {
-		GinkgoWriter.Printf("Failed to get logs: %v\n", err)
-		return
-	}
-	GinkgoWriter.Printf("\n=== Last 100 lines of logs ===\n%s\n", logs)
+	// Raw pod logs are intentionally not collected: they can embed credentials in
+	// forms that regex redaction cannot reliably catch. Fetch them manually with
+	// `oc logs` when a failure needs deeper diagnosis.
 }
