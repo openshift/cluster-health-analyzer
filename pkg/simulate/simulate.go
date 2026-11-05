@@ -107,7 +107,14 @@ func Simulate(ctx context.Context, outputFile, scenarioFile string, alertsOnly b
 		return changes[i].Timestamp.Before(changes[j].Timestamp)
 	})
 
-	gc := &processor.GroupsCollection{}
+	rules, err := processor.LoadRulesFile("manifests/backend/09_incident_rule_defaults.yaml")
+	if err != nil {
+		return err
+	}
+	gc, err := processor.NewGroupsCollection(rules)
+	if err != nil {
+		return err
+	}
 	var groupedIntervalsSet []processor.GroupedInterval
 
 	for _, change := range changes {

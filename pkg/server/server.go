@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -69,11 +70,26 @@ type Server interface {
 
 // StartServer starts processing the metrics and serving them
 // on the /metrics endpoint.
-func StartServer(interval time.Duration, server Server, options common.Options) {
+func StartServer(interval time.Duration, server Server, options common.Options) error {
 	slog.Info("Starting server")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var rulesWatcher *processor.RulesWatcher
+	if !options.DisableIncidents {
+		config, err := common.GetKubeConfig(options.Kubeconfig)
+		if err != nil {
+			return fmt.Errorf("failed to configure IncidentRules client: %w", err)
+		}
+		rulesWatcher, err = processor.NewRulesWatcher(config)
+		if err != nil {
+			return fmt.Errorf("failed to create IncidentRules watcher: %w", err)
+		}
+		if err := rulesWatcher.Start(ctx); err != nil {
+			return err
+		}
+	}
 
 	if !options.DisableComponentsHealth {
 		componentsPath := defaultComponentsConfigPath
@@ -83,13 +99,13 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 		conf, err := loadConfig(componentsPath)
 		if err != nil {
 			slog.Error("Failed to load config ", "error", err)
-			return
+			return err
 		}
 		componentsProc, err := health.NewHealthProcessor(interval,
 			componentHealthAlerts, componentHealthObjects, componentsHealth, options.Kubeconfig, conf, options.AlertManagerURL)
 		if err != nil {
 			slog.Info("Failed to create component processor, terminating", "err", err)
-			return
+			return err
 		}
 		componentsProc.Start(ctx)
 	} else {
@@ -101,11 +117,12 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 			Interval:        interval,
 			PromURL:         options.PromURL,
 			AlertManagerURL: options.AlertManagerURL,
+			RulesSource:     rulesWatcher.GetSnapshot,
 		}
 		processor, err := processor.NewProcessor(processorCfg, healthMapMetrics, componentsMetrics, groupSeverityCountMetrics)
 		if err != nil {
 			slog.Error("Failed to create processor, terminating", "err", err)
-			return
+			return err
 		}
 
 		end := time.Now()
@@ -114,7 +131,7 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 		err = processor.InitGroupsCollection(ctx, start, end, step)
 		if err != nil {
 			slog.Error("Failed to initialize groups collection, terminating", "err", err)
-			return
+			return err
 		}
 
 		processor.Start(ctx)
@@ -135,10 +152,7 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 	server.Handle("/metrics",
 		promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 
-	err := server.Start(ctx)
-	if err != nil {
-		slog.Error("Failed to run server", "err", err)
-	}
+	return server.Start(ctx)
 }
 
 // loadConfig reads the file
