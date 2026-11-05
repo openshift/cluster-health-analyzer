@@ -49,3 +49,28 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    target-branch: "release-coo-1.6"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "release-coo-1.6"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
