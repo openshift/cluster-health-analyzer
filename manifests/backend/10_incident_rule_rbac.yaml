@@ -1,0 +1,22 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-health-analyzer-config
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [cluster-health-analyzer-config]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-health-analyzer-config
+subjects:
+  - kind: ServiceAccount
+    name: cluster-health-analyzer-thanos-querier
+    namespace: openshift-cluster-health-analyzer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-health-analyzer-config

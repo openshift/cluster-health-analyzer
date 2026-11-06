@@ -41,15 +41,22 @@ type processor struct {
 	loader           prom.Loader
 	amLoader         alertmanager.Loader
 	groupsCollection *GroupsCollection
+	rulesSource      func() *RulesSnapshot
+	historyLookback  time.Duration
+	historyStep      time.Duration
 }
 
 type ProcessorConfig struct {
 	Interval        time.Duration
 	PromURL         string
 	AlertManagerURL string
+	RulesSource     func() *RulesSnapshot
 }
 
 func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.MetricSet, groupSeverityCountMetrics prom.MetricSet) (*processor, error) {
+	if cfg.RulesSource == nil {
+		return nil, fmt.Errorf("IncidentRules source is required")
+	}
 	promLoader, err := prom.NewLoader(cfg.PromURL)
 	if err != nil {
 		return nil, err
@@ -69,6 +76,7 @@ func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.
 		interval:                  cfg.Interval,
 		loader:                    promLoader,
 		amLoader:                  amLoader,
+		rulesSource:               cfg.RulesSource,
 	}, nil
 }
 
@@ -83,7 +91,13 @@ func (p *processor) Start(ctx context.Context) {
 // for assigning group-ids to the alerts.
 func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Time, step time.Duration) error {
 	slog.Info("Initializing groups collection", "start", start, "end", end, "step", step)
-	p.groupsCollection = &GroupsCollection{}
+	if p.rulesSource == nil {
+		return fmt.Errorf("IncidentRules source is required")
+	}
+	groups, err := NewGroupsCollection(p.rulesSource())
+	if err != nil {
+		return err
+	}
 
 	slog.Info("Loading alerts range")
 	alertsRange, err := p.loader.LoadAlertsRange(ctx, start, end, step)
@@ -94,7 +108,7 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 
 	// Warm up the groups collection with historical alerts.
 	slog.Info("Processing historical alerts")
-	p.groupsCollection.processHistoricalAlerts(alertsRange)
+	groups.processHistoricalAlerts(alertsRange)
 
 	slog.Info("Loading health map range")
 	healthMapRV, err := p.loader.LoadVectorRange(ctx, ClusterHealthComponentsMap, start, end, step)
@@ -104,7 +118,10 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	slog.Info("Loaded health map range", "len", len(healthMapRV))
 
 	slog.Info("Updating group-ids")
-	p.groupsCollection.UpdateGroupUUIDs(healthMapRV)
+	groups.UpdateGroupUUIDs(healthMapRV)
+	p.groupsCollection = groups
+	p.historyLookback = end.Sub(start)
+	p.historyStep = step
 
 	return nil
 }
@@ -207,6 +224,18 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 }
 
 func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
+	if p.rulesSource != nil {
+		rules := p.rulesSource()
+		if rules == nil || len(rules.rules) == 0 {
+			return nil, fmt.Errorf("no valid IncidentRules loaded")
+		}
+		if p.groupsCollection != nil && p.groupsCollection.rules != rules {
+			slog.Info("IncidentRules changed, reloading incident matchers")
+			if err := p.InitGroupsCollection(ctx, t.Add(-p.historyLookback), t, p.historyStep); err != nil {
+				return nil, fmt.Errorf("failed to reload incident matchers: %w", err)
+			}
+		}
+	}
 	alerts, err := p.loader.LoadQuery(ctx, `ALERTS{alertstate="firing"}`, t)
 	if err != nil {
 		return nil, err

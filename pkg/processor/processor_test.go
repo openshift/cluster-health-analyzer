@@ -1,8 +1,10 @@
 package processor
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
 	"github.com/openshift/cluster-health-analyzer/pkg/prom"
@@ -10,6 +12,7 @@ import (
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -393,4 +396,67 @@ func Test_evaluateSilences(t *testing.T) {
 		})
 	}
 
+}
+
+func TestProcessorReloadsMatchersOnRuleChange(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	loader := mocks.NewMockPrometheusLoader(ctrl)
+	am := mocks.NewMockAlertManagerLoader(ctrl)
+	original := newTestGroupsCollection(t)
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	original.ProcessAlertsBatch([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n0"}}, now.Add(-time.Hour))
+	replacement := testRules(t, `{"strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`)
+	p := &processor{
+		loader: loader, amLoader: am, groupsCollection: original,
+		rulesSource:     func() *RulesSnapshot { return replacement },
+		historyLookback: 4 * 24 * time.Hour, historyStep: time.Minute,
+	}
+	loader.EXPECT().LoadAlertsRange(gomock.Any(), now.Add(-4*24*time.Hour), now, time.Minute).Return(prom.RangeVector(nil), nil)
+	loader.EXPECT().LoadVectorRange(gomock.Any(), ClusterHealthComponentsMap, now.Add(-4*24*time.Hour), now, time.Minute).Return(prom.RangeVector(nil), nil)
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now).Return([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n1"}}, nil)
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now.Add(time.Minute)).Return([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n2"}}, nil)
+	am.EXPECT().SilencedAlerts().Return(nil, nil).Times(2)
+	first, err := p.loadAlerts(context.Background(), now)
+	require.NoError(t, err)
+	require.NotSame(t, original, p.groupsCollection)
+	require.Same(t, replacement, p.groupsCollection.rules)
+	second, err := p.loadAlerts(context.Background(), now.Add(time.Minute))
+	require.NoError(t, err)
+	require.NotEqual(t, first[0]["group_id"], second[0]["group_id"])
+	for _, g := range p.groupsCollection.Groups {
+		for _, m := range g.Matchers {
+			require.Len(t, m.Labels, 1)
+			require.Contains(t, m.Labels, model.LabelName("node"))
+		}
+	}
+}
+
+func TestProcessorDoesNotUseMatchersWithoutRules(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	original := newTestGroupsCollection(t)
+	p := &processor{
+		loader: mocks.NewMockPrometheusLoader(ctrl), groupsCollection: original,
+		rulesSource: func() *RulesSnapshot { return &RulesSnapshot{} },
+	}
+	_, err := p.loadAlerts(context.Background(), time.Now())
+	require.ErrorContains(t, err, "no valid IncidentRules")
+	_, err = NewProcessor(ProcessorConfig{}, nil, nil, nil)
+	require.ErrorContains(t, err, "source is required")
+}
+
+func TestProcessorFailedReloadDoesNotPublishPartialState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	loader := mocks.NewMockPrometheusLoader(ctrl)
+	original := newTestGroupsCollection(t)
+	replacement := testRules(t, `{"strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`)
+	p := &processor{
+		loader: loader, groupsCollection: original,
+		rulesSource:     func() *RulesSnapshot { return replacement },
+		historyLookback: 4 * 24 * time.Hour, historyStep: time.Minute,
+	}
+	loader.EXPECT().LoadAlertsRange(gomock.Any(), gomock.Any(), gomock.Any(), time.Minute).Return(prom.RangeVector(nil), nil)
+	loader.EXPECT().LoadVectorRange(gomock.Any(), ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), time.Minute).Return(prom.RangeVector(nil), errors.New("history unavailable"))
+	_, err := p.loadAlerts(context.Background(), time.Now())
+	require.ErrorContains(t, err, "failed to reload incident matchers")
+	require.Same(t, original, p.groupsCollection)
 }
