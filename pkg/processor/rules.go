@@ -12,6 +12,8 @@ import (
 	"github.com/prometheus/common/model"
 	"go.yaml.in/yaml/v3"
 
+	"maps"
+
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 )
 
@@ -33,6 +35,11 @@ const (
 	windowFromStart       = "start"
 	withinDurationPattern = `^([0-9]+(\.[0-9]+)?(h|m|s))+$`
 )
+
+// MaxRuleWindow bounds the matching window of a strategy. It matches the
+// history horizon loaded at startup, so every configured window can be
+// reconstructed from the loaded history.
+const MaxRuleWindow = 7 * 24 * time.Hour
 
 var withinDurationRE = regexp.MustCompile(withinDurationPattern)
 
@@ -91,6 +98,9 @@ func parseRule(name string, spec IncidentRuleSpec) (*parsedRule, error) {
 		within, err := time.ParseDuration(strategy.Within)
 		if err != nil || within <= 0 {
 			return nil, fmt.Errorf("strategy %d: within must be a positive duration", i)
+		}
+		if within > MaxRuleWindow {
+			return nil, fmt.Errorf("strategy %d: within must be at most %s", i, MaxRuleWindow)
 		}
 		if strategy.From != windowFromEnd && strategy.From != windowFromStart {
 			return nil, fmt.Errorf("strategy %d: from must be end or start", i)
@@ -247,6 +257,16 @@ func (rules *RulesSnapshot) rootGroupMatchers(interval Interval, rootGroupID str
 	return groups
 }
 
+// hasAllLabels reports whether every key is present in the label set.
+func hasAllLabels(labels model.LabelSet, keys []model.LabelName) bool {
+	for _, key := range keys {
+		if _, ok := labels[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (rules *RulesSnapshot) alertGroupMatchers(interval Interval) []*GroupMatcher {
 	var groups []*GroupMatcher
 	for _, rule := range rules.rules {
@@ -259,9 +279,17 @@ func (rules *RulesSnapshot) alertGroupMatchers(interval Interval) []*GroupMatche
 			var labels []model.LabelSet
 			switch strategy.operator {
 			case "exact":
-				labels = append(labels, interval.Metric)
+				// Clone the labels: the caller may mutate the alert's map (for
+				// example by adding group_id), and the matcher must keep the
+				// observation's original labels.
+				labels = append(labels, maps.Clone(interval.Metric))
 			case "allOf":
-				labels = append(labels, getMapSubset(interval.Metric, strategy.Keys...))
+				// All listed labels are mandatory: skip the strategy when any
+				// is missing, so a missing label cannot narrow or empty the
+				// selector.
+				if hasAllLabels(interval.Metric, strategy.Keys) {
+					labels = append(labels, getMapSubset(interval.Metric, strategy.Keys...))
+				}
 			case "anyOf":
 				// Keep the legacy map iteration semantics for equally ranked matchers.
 				for key, value := range getMapSubset(interval.Metric, strategy.Keys...) {

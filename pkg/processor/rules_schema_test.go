@@ -104,7 +104,9 @@ func TestExcludedAlertsCannotMatchExistingFuzzyMatcher(t *testing.T) {
 		}
 		interval.Metric["namespace"] = "elsewhere"
 		generated := gc.rules.alertGroupMatchers(interval)
-		require.Len(t, generated, 5)
+		// The allOf strategy generates no matcher for this alert: it lacks the
+		// service/job/container labels the default allOf strategy requires.
+		require.Len(t, generated, 4)
 	}
 }
 
@@ -173,7 +175,7 @@ func TestFromControlsUpdatesIndependentlyOfOperator(t *testing.T) {
 	}
 }
 
-func TestMatcherRetentionUsesModifiedAndLoaderPolicy(t *testing.T) {
+func TestMatcherRetentionUsesStrategyReference(t *testing.T) {
 	for _, test := range []struct {
 		operator  string
 		within    string
@@ -181,7 +183,7 @@ func TestMatcherRetentionUsesModifiedAndLoaderPolicy(t *testing.T) {
 	}{
 		{`{"exact":true}`, "24h", 120 * time.Hour},
 		{`{"exact":true}`, "120h", 120 * time.Hour},
-		{`{"exact":true}`, "240h", 240 * time.Hour},
+		{`{"exact":true}`, "168h", 168 * time.Hour},
 		{`{"allOf":["namespace"]}`, "2h", 24 * time.Hour},
 		{`{"allOf":["namespace"]}`, "48h", 48 * time.Hour},
 		{`{"anyOf":["namespace"]}`, "24h", 24 * time.Hour},
@@ -196,9 +198,16 @@ func TestMatcherRetentionUsesModifiedAndLoaderPolicy(t *testing.T) {
 				gc, err := NewGroupsCollection(rules)
 				require.NoError(t, err)
 				start := model.Time(1_000_000)
-				gc.ProcessIntervalsBatch([]Interval{{Metric: model.LabelSet{"alertname": "A", "namespace": "ns"}, Start: start, End: start.Add(300 * time.Hour)}})
+				duration := 100 * time.Hour
+				gc.ProcessIntervalsBatch([]Interval{{Metric: model.LabelSet{"alertname": "A", "namespace": "ns"}, Start: start, End: start.Add(duration)}})
 				matcher := gc.Groups[0]
-				expires := start.Add(test.retention)
+				// Retention expires relative to the strategy's reference time:
+				// the interval end for end-anchored strategies, the creation
+				// start (no further matches here) for start-anchored ones.
+				expires := start.Add(duration + test.retention)
+				if from == "start" {
+					expires = start.Add(test.retention)
+				}
 				gc.PruneGroups(expires.Time())
 				require.Contains(t, gc.Groups, matcher)
 				gc.PruneGroups(expires.Add(time.Millisecond).Time())
@@ -267,7 +276,7 @@ func TestExactFallbackKeepsLatestObservation(t *testing.T) {
 }
 
 func TestWatchdogDoesNotCreateTemporalMatchers(t *testing.T) {
-	gc, err := NewGroupsCollection(testRules(t, `{"strategies":[{"match":{},"within":"87600h","from":"start"}]}`))
+	gc, err := NewGroupsCollection(testRules(t, `{"strategies":[{"match":{},"within":"168h","from":"start"}]}`))
 	require.NoError(t, err)
 	start := model.TimeFromUnixNano(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano())
 	first := gc.ProcessIntervalsBatch([]Interval{{Metric: model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}, Start: start, End: start}})
@@ -297,4 +306,16 @@ func TestExactFallbackRestoresRecentPrecedenceAfterPruning(t *testing.T) {
 	require.NotNil(t, matched)
 	require.Equal(t, originalID, matched.RootGroupID)
 	require.Equal(t, 0, matched.strategy.Order)
+}
+
+func TestRuleWindowMaximum(t *testing.T) {
+	// The inclusive upper bound is accepted.
+	_, err := NewGroupsCollection(testRules(t, `{"strategies":[{"match":{},"within":"168h","from":"start"}]}`))
+	require.NoError(t, err)
+
+	// Anything above it is invalid.
+	spec, err := decodeRuleSpec([]byte(`{"strategies":[{"match":{},"within":"168h1m","from":"start"}]}`))
+	require.NoError(t, err)
+	_, err = parseRule("custom", spec)
+	require.ErrorContains(t, err, "within must be at most")
 }

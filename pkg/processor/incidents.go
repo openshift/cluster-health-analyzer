@@ -274,11 +274,15 @@ func (gc *GroupsCollection) ProcessAlertsBatch(alerts []model.LabelSet, timestam
 	return ret
 }
 
-// PruneGroups removes matchers whose loader-defined retention since Modified has expired.
+// PruneGroups removes matchers whose retention since the strategy's
+// reference time has expired. Retention is measured from the reference time
+// (Modified for start-anchored, End for end-anchored strategies), so an
+// end-anchored matcher with a recent end survives even if its modified time
+// is old.
 func (gc *GroupsCollection) PruneGroups(t time.Time) {
 	mt := model.TimeFromUnixNano(t.UnixNano())
 	gc.Groups = slices.DeleteFunc(gc.Groups, func(g *GroupMatcher) bool {
-		return mt.Sub(g.Modified) > g.strategy.Retention
+		return mt.Sub(g.referenceTime()) > g.strategy.Retention
 	})
 }
 
@@ -331,19 +335,14 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 	}
 
 	ret := make([]GroupedInterval, 0, len(intervals))
-	if groupMatcher == nil && !isWatchdogGroup {
-		// If not provided, create a new root group for all intervals in this batch.
-		// We don't do this if watchdog is present in the group, as it indicates
-		// the alerts are together by accident (perhaps due to a restart or data
-		// outage).
-		groupMatcher = newGc.newRootGroup(intervals[0], isWatchdogGroup)
-	}
-
 	for _, i := range intervals {
 		var iGroupMatcher *GroupMatcher
 		iGroupMatcher = groupMatcher
 
 		if iGroupMatcher == nil {
+			// Rules prevail over batching: each unmatched alert is evaluated
+			// on its own, including against candidates created earlier in
+			// this batch. Batch membership alone never groups alerts.
 			iGroupMatcher = newGc.bestMatch(i)
 		}
 

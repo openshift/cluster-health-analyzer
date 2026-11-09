@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	// HistoryLookback is the number of days to look back for alerts.
-	// This is used to build the groups collection to match against.
-	historyLookback = 4 * 24 * time.Hour
+	// HistoryLookback is the horizon of alerts history used to build the
+	// groups collection to match against. It matches the maximum rule window,
+	// so every configured window can be reconstructed.
+	historyLookback = processor.MaxRuleWindow
 
 	// default file path for the configuration of components for
 	// health evaluation

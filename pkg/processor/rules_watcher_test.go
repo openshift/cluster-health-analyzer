@@ -79,8 +79,9 @@ func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 	changed := testConfigMap(t, testRulesYAML("custom", "  - match:\n      allOf: [namespace]\n    within: 24h\n    from: start\n"))
 	require.NoError(t, store.Update(changed))
 	watcher.rebuild()
-	require.NotSame(t, original, watcher.GetSnapshot())
-	require.Equal(t, "namespace", string(watcher.GetSnapshot().rules[0].Strategies[0].Keys[0]))
+	updated := watcher.GetSnapshot()
+	require.NotSame(t, original, updated)
+	require.Equal(t, "namespace", string(updated.rules[0].Strategies[0].Keys[0]))
 	// Previously published snapshots remain immutable while a processor uses them.
 	require.Equal(t, "node", string(original.rules[0].Strategies[0].Keys[0]))
 
@@ -91,7 +92,8 @@ func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 	invalid := testConfigMap(t, testRulesYAML("custom", "  - match:\n      anyOf: []\n    within: 24h\n    from: start\n"))
 	require.NoError(t, store.Update(invalid))
 	watcher.rebuild()
-	require.Empty(t, watcher.GetSnapshot().rules)
+	// Invalid updates are logged and ignored: the last valid snapshot stays.
+	require.Same(t, updated, watcher.GetSnapshot())
 	require.Contains(t, log.String(), "Cannot load invalid incident rules")
 }
 
@@ -109,7 +111,28 @@ func TestRulesWatcherObservesUpdatesAndDeletion(t *testing.T) {
 		return watcher.GetSnapshot() != original && watcher.GetSnapshot().rules[0].Strategies[0].operator == "anyOf"
 	}, time.Second, 10*time.Millisecond)
 	require.NoError(t, client.CoreV1().ConfigMaps(watchNamespace()).Delete(ctx, ConfigMapName, metav1.DeleteOptions{}))
-	require.Eventually(t, func() bool { return len(watcher.GetSnapshot().rules) == 0 }, time.Second, 10*time.Millisecond)
+	// Deleting the ConfigMap keeps the last valid rules; it is not an
+	// implicit disable command.
+	require.Never(t, func() bool { return len(watcher.GetSnapshot().rules) == 0 }, 500*time.Millisecond, 100*time.Millisecond)
+	require.Equal(t, "anyOf", watcher.GetSnapshot().rules[0].Strategies[0].operator)
+	// Recreating the ConfigMap allows valid updates to be adopted again.
+	recreated := testConfigMap(t, testRulesYAML("custom", testNodeStrategy))
+	_, err = client.CoreV1().ConfigMaps(watchNamespace()).Create(ctx, recreated, metav1.CreateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return watcher.GetSnapshot().rules[0].Strategies[0].operator == "allOf"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRulesNamespacePrecedence(t *testing.T) {
+	t.Setenv("INCIDENT_RULES_NAMESPACE", "override-ns")
+	require.Equal(t, "override-ns", watchNamespace())
+
+	t.Setenv("INCIDENT_RULES_NAMESPACE", "  ")
+	// Without the override, the pod namespace file or the default namespace
+	// is used; both are nonempty and stable in the test environment.
+	require.NotEqual(t, "override-ns", watchNamespace())
+	require.NotEmpty(t, watchNamespace())
 }
 
 func TestRulesWatcherUpdatesWindowAndPriority(t *testing.T) {

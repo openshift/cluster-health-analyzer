@@ -404,25 +404,37 @@ func TestProcessorReloadsMatchersOnRuleChange(t *testing.T) {
 	am := mocks.NewMockAlertManagerLoader(ctrl)
 	original := newTestGroupsCollection(t)
 	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
-	original.ProcessAlertsBatch([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n0"}}, now.Add(-time.Hour))
+	// A was assigned to an incident by the previous batch under the default rules.
+	assigned := original.ProcessAlertsBatch([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n0"}}, now.Add(-time.Hour))
+	originalID := string(assigned[0]["group_id"])
 	replacement := testRules(t, `{"strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`)
 	p := &processor{
 		loader: loader, amLoader: am, groupsCollection: original,
-		rulesSource:     func() *RulesSnapshot { return replacement },
-		historyLookback: 4 * 24 * time.Hour, historyStep: time.Minute,
+		rulesSource: func() *RulesSnapshot { return replacement },
+		assignedAlerts: []model.LabelSet{
+			{"alertname": "A", "namespace": "same", "node": "n0", "group_id": model.LabelValue(originalID)},
+		},
 	}
-	loader.EXPECT().LoadAlertsRange(gomock.Any(), now.Add(-4*24*time.Hour), now, time.Minute).Return(prom.RangeVector(nil), nil)
-	loader.EXPECT().LoadVectorRange(gomock.Any(), ClusterHealthComponentsMap, now.Add(-4*24*time.Hour), now, time.Minute).Return(prom.RangeVector(nil), nil)
-	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now).Return([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n1"}}, nil)
-	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now.Add(time.Minute)).Return([]model.LabelSet{{"alertname": "A", "namespace": "same", "node": "n2"}}, nil)
-	am.EXPECT().SilencedAlerts().Return(nil, nil).Times(2)
-	first, err := p.loadAlerts(context.Background(), now)
+	// The rules change is adopted without reclassifying: A keeps its incident,
+	// a new alert on the same node joins it, and an alert on another node gets
+	// a new incident under the new rules.
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now).Return([]model.LabelSet{
+		{"alertname": "A", "namespace": "same", "node": "n0"},
+		{"alertname": "C", "namespace": "same", "node": "n0"},
+		{"alertname": "D", "namespace": "same", "node": "n1"},
+	}, nil)
+	am.EXPECT().SilencedAlerts().Return(nil, nil)
+	got, err := p.loadAlerts(context.Background(), now)
 	require.NoError(t, err)
 	require.NotSame(t, original, p.groupsCollection)
 	require.Same(t, replacement, p.groupsCollection.rules)
-	second, err := p.loadAlerts(context.Background(), now.Add(time.Minute))
-	require.NoError(t, err)
-	require.NotEqual(t, first[0]["group_id"], second[0]["group_id"])
+	byName := map[string]string{}
+	for _, alert := range got {
+		byName[string(alert["alertname"])] = string(alert["group_id"])
+	}
+	require.Equal(t, originalID, byName["A"], "assigned alert must keep its incident")
+	require.Equal(t, originalID, byName["C"], "new alert on the same node may join the existing incident")
+	require.NotEqual(t, originalID, byName["D"], "alert on another node must get a new incident")
 	for _, g := range p.groupsCollection.Groups {
 		for _, m := range g.Matchers {
 			require.Len(t, m.Labels, 1)
@@ -445,18 +457,12 @@ func TestProcessorDoesNotUseMatchersWithoutRules(t *testing.T) {
 }
 
 func TestProcessorFailedReloadDoesNotPublishPartialState(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	loader := mocks.NewMockPrometheusLoader(ctrl)
 	original := newTestGroupsCollection(t)
-	replacement := testRules(t, `{"strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`)
 	p := &processor{
-		loader: loader, groupsCollection: original,
-		rulesSource:     func() *RulesSnapshot { return replacement },
-		historyLookback: 4 * 24 * time.Hour, historyStep: time.Minute,
+		loader: mocks.NewMockPrometheusLoader(gomock.NewController(t)), groupsCollection: original,
+		rulesSource: func() *RulesSnapshot { return &RulesSnapshot{} },
 	}
-	loader.EXPECT().LoadAlertsRange(gomock.Any(), gomock.Any(), gomock.Any(), time.Minute).Return(prom.RangeVector(nil), nil)
-	loader.EXPECT().LoadVectorRange(gomock.Any(), ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), time.Minute).Return(prom.RangeVector(nil), errors.New("history unavailable"))
 	_, err := p.loadAlerts(context.Background(), time.Now())
-	require.ErrorContains(t, err, "failed to reload incident matchers")
+	require.ErrorContains(t, err, "no valid IncidentRules")
 	require.Same(t, original, p.groupsCollection)
 }

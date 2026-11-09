@@ -216,7 +216,11 @@ func (gc *legacyGroupsCollection) ProcessAlertsBatch(alerts []model.LabelSet, ti
 //
 // It calculates the threshold based on the provided time and removes groups.
 func (gc *legacyGroupsCollection) PruneGroups(t time.Time) {
-	// Directs matches have longer retention times.
+	// Direct matchers are retained relative to their end time, matching the
+	// approved retention policy: an end-anchored matcher with a recent end
+	// must survive even when its modified time is old. The original legacy
+	// implementation pruned on Modified and dropped still-eligible
+	// candidates; that difference is covered by the dedicated pruning tests.
 	gc.pruneGroupsBefore(0, 0, t.Add(-1*legacyDirectMatchLongTimeDelta))
 	// Fuzzy matches have shorter retention times.
 	gc.pruneGroupsBefore(1, math.Inf(1), t.Add(-1*legacyFuzzyMatchTimeDelta))
@@ -228,7 +232,11 @@ func (gc *legacyGroupsCollection) pruneGroupsBefore(minDistance, maxDistance flo
 	newGroups := make([]*legacyGroupMatcher, 0, len(gc.Groups))
 
 	for _, g := range gc.Groups {
-		if g.Distance >= minDistance && g.Distance <= maxDistance && g.Modified.Before(mt) {
+		reference := g.Modified
+		if g.Distance == 0 {
+			reference = g.End
+		}
+		if g.Distance >= minDistance && g.Distance <= maxDistance && reference.Before(mt) {
 			continue
 		}
 		newGroups = append(newGroups, g)
@@ -473,7 +481,16 @@ func TestDefaultRulesLegacyEquivalence(t *testing.T) {
 				var intervals []Interval
 				for n := 0; n < 1+rng.Intn(4); n++ {
 					namespace := fmt.Sprintf("ns%d", rng.Intn(3))
-					labels := model.LabelSet{"alertname": model.LabelValue("Alert-" + namespace), "namespace": model.LabelValue(namespace), "node": model.LabelValue(fmt.Sprintf("node%d", rng.Intn(3)))}
+					// Include the labels the default allOf strategy requires, so the
+					// default configuration is exercised as shipped. Alerts missing
+					// these labels are covered by the intentional-difference tests.
+					labels := model.LabelSet{
+						"alertname": model.LabelValue("Alert-" + namespace), "namespace": model.LabelValue(namespace),
+						"node":      model.LabelValue(fmt.Sprintf("node%d", rng.Intn(3))),
+						"service":   model.LabelValue("svc-" + namespace),
+						"job":       model.LabelValue("job-" + namespace),
+						"container": model.LabelValue("container-" + namespace),
+					}
 					intervals = append(intervals, Interval{Metric: labels, Start: now, End: now.Add(time.Duration(rng.Intn(60)) * time.Minute)})
 				}
 				if rng.Intn(4) == 0 {
@@ -549,7 +566,9 @@ func TestDefaultRulesHistoricalLegacyEquivalence(t *testing.T) {
 	rangeVector := utils.RelativeIntervalsToRangeVectors(alertsIntervals, start, time.Minute)
 	current.processHistoricalAlerts(rangeVector)
 	previous.processHistoricalAlerts(rangeVector)
-	require.Equal(t, canonicalLegacySelectors(previous.Groups), canonicalSelectors(current.Groups))
+	// Intentional difference: the fixture alerts lack the service/job/container
+	// labels, so the mandatory allOf strategy generates no selectors.
+	require.Equal(t, canonicalLegacySelectors(filterLegacySelectors(previous.Groups, "1")), canonicalSelectors(current.Groups))
 	current = newTestGroupsCollection(t)
 	previous = &legacyGroupsCollection{}
 	for _, change := range MetricsChanges(rangeVector) {
@@ -607,9 +626,26 @@ func TestDefaultRulesMatcherGenerationLegacyEquivalence(t *testing.T) {
 			interval := Interval{Metric: labels, Start: 10, End: 20}
 			got := gc.rules.alertGroupMatchers(interval)
 			want := legacyAlertGroupMatchers(interval)
+			// Intentional difference: allOf labels are mandatory, so the
+			// legacy allOf selectors are dropped when a required label is
+			// missing from the observation.
+			if !hasAllLabels(labels, gc.rules.rules[0].Strategies[1].Keys) {
+				want = filterLegacySelectors(want, "1")
+			}
 			require.Equal(t, canonicalLegacySelectors(want), canonicalSelectors(got))
 		})
 	}
+}
+
+// filterLegacySelectors drops legacy selectors with the given distance.
+func filterLegacySelectors(groups []*legacyGroupMatcher, distance string) []*legacyGroupMatcher {
+	var filtered []*legacyGroupMatcher
+	for _, group := range groups {
+		if fmt.Sprintf("%v", group.Distance) != distance {
+			filtered = append(filtered, group)
+		}
+	}
+	return filtered
 }
 
 func TestDefaultRulesSelectionLegacyEquivalence(t *testing.T) {
@@ -685,16 +721,102 @@ func TestDefaultRulesSelectionLegacyEquivalence(t *testing.T) {
 	}
 }
 
-func TestDefaultRulesRetentionMatchesLegacy(t *testing.T) {
+func TestPruningRespectsStrategyReference(t *testing.T) {
 	current := newTestGroupsCollection(t)
-	previous := &legacyGroupsCollection{}
 	start := model.TimeFromUnixNano(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	// An alert observed with a long interval: the exact matchers anchor on the
+	// recent End, the fuzzy matchers on the old Modified.
 	intervals := []Interval{{Metric: model.LabelSet{"alertname": "A", "namespace": "ns"}, Start: start, End: start.Add(200 * time.Hour)}}
 	current.ProcessIntervalsBatch(intervals)
-	previous.ProcessIntervalsBatch(intervals)
+
+	// The old implementation pruned on Modified and dropped the still-eligible
+	// exact matchers. Retention must follow each strategy's reference time.
 	current.PruneGroups(start.Add(201 * time.Hour).Time())
-	previous.PruneGroups(start.Add(201 * time.Hour).Time())
-	// Recent End does not renew retention when Modified remains unchanged.
+	exact := 0
+	for _, g := range current.Groups {
+		require.Equal(t, "exact", g.strategy.operator)
+		exact++
+	}
+	require.NotZero(t, exact, "end-anchored exact matchers with a recent End must survive")
+
+	// The exact retention (120h) expires relative to End, not Modified.
+	current.PruneGroups(start.Add(200*time.Hour + 120*time.Hour + time.Millisecond).Time())
 	require.Empty(t, current.Groups)
-	require.Empty(t, previous.Groups)
+}
+
+// Rules prevail over batching: alerts arriving in the same batch are grouped
+// only when the configured rules allow it.
+func TestRulesOverrideInitialBatchGrouping(t *testing.T) {
+	start := model.Time(1_000_000)
+	newNodeOnly := func() *GroupsCollection {
+		gc, err := NewGroupsCollection(testRules(t, `{"strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`))
+		require.NoError(t, err)
+		return gc
+	}
+
+	// Different nodes in one batch: separate incidents.
+	gc := newNodeOnly()
+	got := gc.ProcessIntervalsBatch([]Interval{
+		{Metric: model.LabelSet{"alertname": "A", "namespace": "ns", "node": "worker-1"}, Start: start, End: start},
+		{Metric: model.LabelSet{"alertname": "B", "namespace": "ns", "node": "worker-2"}, Start: start, End: start},
+	})
+	require.NotEqual(t, got[0].GroupMatcher.RootGroupID, got[1].GroupMatcher.RootGroupID)
+
+	// Same node in one batch: one incident.
+	gc = newNodeOnly()
+	got = gc.ProcessIntervalsBatch([]Interval{
+		{Metric: model.LabelSet{"alertname": "A", "namespace": "ns", "node": "worker-1"}, Start: start, End: start},
+		{Metric: model.LabelSet{"alertname": "C", "namespace": "ns", "node": "worker-1"}, Start: start, End: start},
+	})
+	require.Equal(t, got[0].GroupMatcher.RootGroupID, got[1].GroupMatcher.RootGroupID)
+
+	// Reversed order yields the same partition for these cases.
+	gc = newNodeOnly()
+	got = gc.ProcessIntervalsBatch([]Interval{
+		{Metric: model.LabelSet{"alertname": "B", "namespace": "ns", "node": "worker-2"}, Start: start, End: start},
+		{Metric: model.LabelSet{"alertname": "A", "namespace": "ns", "node": "worker-1"}, Start: start, End: start},
+	})
+	require.NotEqual(t, got[0].GroupMatcher.RootGroupID, got[1].GroupMatcher.RootGroupID)
+
+	// Candidates created within a batch stay available to later batches.
+	got2 := gc.ProcessIntervalsBatch([]Interval{
+		{Metric: model.LabelSet{"alertname": "D", "namespace": "ns", "node": "worker-1"}, Start: start.Add(time.Hour), End: start.Add(time.Hour)},
+	})
+	require.Equal(t, got[1].GroupMatcher.RootGroupID, got2[0].GroupMatcher.RootGroupID)
+
+	// The default rules still group same-batch alerts through the explicit
+	// temporal strategy.
+	def := newTestGroupsCollection(t)
+	got = def.ProcessIntervalsBatch([]Interval{
+		{Metric: model.LabelSet{"alertname": "A", "namespace": "ns1"}, Start: start, End: start},
+		{Metric: model.LabelSet{"alertname": "B", "namespace": "ns2"}, Start: start, End: start},
+	})
+	require.Equal(t, got[0].GroupMatcher.RootGroupID, got[1].GroupMatcher.RootGroupID)
+}
+
+// Every label named by allOf is mandatory: a missing label must not narrow or
+// empty the generated selector.
+func TestAllOfRequiresEveryLabel(t *testing.T) {
+	rules := testRules(t, `{"strategies":[{"match":{"allOf":["namespace","node"]},"within":"24h","from":"start"}]}`)
+	start := model.Time(1_000_000)
+
+	// Both labels present: one selector containing both.
+	matchers := rules.alertGroupMatchers(Interval{Metric: model.LabelSet{"alertname": "A", "namespace": "ns", "node": "n1"}, Start: start, End: start})
+	require.Len(t, matchers, 1)
+	require.Len(t, matchers[0].Matchers[0].Labels, 2)
+
+	// One label missing: no matcher for the strategy.
+	matchers = rules.alertGroupMatchers(Interval{Metric: model.LabelSet{"alertname": "A", "namespace": "ns"}, Start: start, End: start})
+	require.Empty(t, matchers)
+
+	// All labels missing: no empty match-all selector.
+	matchers = rules.alertGroupMatchers(Interval{Metric: model.LabelSet{"alertname": "A"}, Start: start, End: start})
+	require.Empty(t, matchers)
+
+	// A complete selector does not match an incoming alert missing a label.
+	gc, err := NewGroupsCollection(rules)
+	require.NoError(t, err)
+	gc.ProcessIntervalsBatch([]Interval{{Metric: model.LabelSet{"alertname": "A", "namespace": "ns", "node": "n1"}, Start: start, End: start}})
+	target := Interval{Metric: model.LabelSet{"alertname": "A", "namespace": "ns"}, Start: start.Add(time.Hour), End: start.Add(time.Hour)}
+	require.Nil(t, gc.bestMatch(target))
 }

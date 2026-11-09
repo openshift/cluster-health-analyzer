@@ -59,9 +59,13 @@ func newRulesWatcher(client kubernetes.Interface) (*RulesWatcher, error) {
 	return watcher, nil
 }
 
-// watchNamespace returns the namespace of the pod running the analyzer, so the
-// ConfigMap is read next to the deployment without extra configuration.
+// watchNamespace returns the namespace holding the rules ConfigMap.
+// An explicit environment override wins, so local runs and operators can
+// point at a namespace other than the pod's own.
 func watchNamespace() string {
+	if ns := strings.TrimSpace(os.Getenv("INCIDENT_RULES_NAMESPACE")); ns != "" {
+		return ns
+	}
 	if ns, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
 		if trimmed := strings.TrimSpace(string(ns)); trimmed != "" {
 			return trimmed
@@ -113,6 +117,15 @@ func (rw *RulesWatcher) rebuild() {
 			continue
 		}
 		rules = parsed
+	}
+	if rules == nil {
+		// The ConfigMap is missing, deleted or invalid. Keep the last valid
+		// snapshot so incident processing continues; startup without any
+		// valid snapshot still fails in Start.
+		if rw.snapshot != nil {
+			slog.Warn("Keeping last valid IncidentRules: no valid configuration available", "configmap", ConfigMapName)
+		}
+		return
 	}
 	sortRules(rules)
 	snapshot := &RulesSnapshot{rules: rules}
