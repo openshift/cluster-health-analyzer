@@ -746,7 +746,7 @@ covered or that cluster-level verification has passed:
 | Area | Test references |
 |---|---|
 | Parsing, exclusions, priority, windows, shared exact timelines | `TestParseRuleValidation`, `TestExcludedAlertsCannotMatchExistingFuzzyMatcher`, `TestRulePriorityPrecedesStrategyOrder`, `TestRuleWindowConfiguration`, `TestRuleWindowMaximum`, `TestExactFallbackKeepsLatestObservation` in [rules_schema_test.go](../pkg/processor/rules_schema_test.go) |
-| Mandatory labels and batch grouping | `TestAllOfRequiresEveryLabel`, `TestRulesOverrideInitialBatchGrouping` in [rules_test.go](../pkg/processor/rules_test.go) |
+| Mandatory labels and batch grouping | `TestAllOfRequiresEveryLabel`, `TestRulesOverrideInitialBatchGrouping` in [rules_test.go](../pkg/processor/rules_test.go); `TestWatchdogSafeguardSeparatesUnmatchedAlerts` in [rules_schema_test.go](../pkg/processor/rules_schema_test.go) |
 | Last-valid configuration and namespace selection | `TestRulesWatcherStartRequiresValidRules`, `TestRulesWatcherRebuildInvalidatesChangedDefinitions`, `TestRulesWatcherObservesUpdatesAndDeletion`, `TestRulesNamespacePrecedence` in [rules_watcher_test.go](../pkg/processor/rules_watcher_test.go) |
 | Reload and historical identity | `TestProcessorReloadsMatchersOnRuleChange`, `TestProcessorFailedReloadDoesNotPublishPartialState`, `TestRestartAfterRuleChangePreservesAssignments`, `TestHistoricalAssignmentCorrelation` in [processor_test.go](../pkg/processor/processor_test.go) |
 | Startup failure without rules | `TestStartServerFailsBeforeServingWithoutRules` in [server_test.go](../pkg/server/server_test.go) |

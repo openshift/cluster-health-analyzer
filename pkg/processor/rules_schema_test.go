@@ -319,3 +319,41 @@ func TestRuleWindowMaximum(t *testing.T) {
 	_, err = parseRule("custom", spec)
 	require.ErrorContains(t, err, "within must be at most")
 }
+
+// The Watchdog safeguard suppresses time-only grouping for the whole unmatched
+// set: under a temporal-only configuration, Watchdog, A and B observed together
+// produce three incidents regardless of Watchdog's position, while A and B
+// alone share one incident through the time-only strategy.
+func TestWatchdogSafeguardSeparatesUnmatchedAlerts(t *testing.T) {
+	newTemporalOnly := func(t *testing.T) *GroupsCollection {
+		t.Helper()
+		gc, err := NewGroupsCollection(testRules(t, `{"strategies":[{"match":{},"within":"15m","from":"start"}]}`))
+		require.NoError(t, err)
+		return gc
+	}
+	start := model.TimeFromUnixNano(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	watchdog := Interval{Metric: model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}, Start: start, End: start}
+	disk := Interval{Metric: model.LabelSet{"alertname": "KubeNodeDown", "namespace": "openshift-monitoring"}, Start: start, End: start}
+	network := Interval{Metric: model.LabelSet{"alertname": "NetworkError", "namespace": "openshift-monitoring"}, Start: start, End: start}
+
+	// Without Watchdog, the time-only strategy groups the two alerts.
+	got := newTemporalOnly(t).ProcessIntervalsBatch([]Interval{disk, network})
+	require.Equal(t, got[0].GroupMatcher.RootGroupID, got[1].GroupMatcher.RootGroupID)
+
+	// With Watchdog anywhere in the unmatched set, no temporal matchers are
+	// created: all three alerts get separate incidents.
+	for name, batch := range map[string][]Interval{
+		"watchdog first":  {watchdog, disk, network},
+		"watchdog middle": {disk, watchdog, network},
+		"watchdog last":   {disk, network, watchdog},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := newTemporalOnly(t).ProcessIntervalsBatch(batch)
+			ids := map[string]struct{}{}
+			for _, gi := range got {
+				ids[gi.GroupMatcher.RootGroupID] = struct{}{}
+			}
+			require.Len(t, ids, 3, "each alert must get its own incident")
+		})
+	}
+}
