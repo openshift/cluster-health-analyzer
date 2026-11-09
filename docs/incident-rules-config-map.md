@@ -170,18 +170,6 @@ implementation; do not silently introduce a different alert-identity definition.
 
 **Target, D5:**
 
-```mermaid
-flowchart TD
-    S["Select ConfigMap namespace"] --> E{"Nonempty environment override?"}
-    E -->|Yes| EN["Use override"]
-    E -->|No| P{"Pod namespace file available and nonempty?"}
-    P -->|Yes| PN["Use pod namespace"]
-    P -->|No| DN["Use default"]
-    EN --> W["Watch named ConfigMap in selected namespace"]
-    PN --> W
-    DN --> W
-```
-
 Proposed environment variable: `INCIDENT_RULES_NAMESPACE`; finalize its name
 before implementation. The precedence is confirmed. Pod discovery reads
 `/var/run/secrets/kubernetes.io/serviceaccount/namespace`.
@@ -204,18 +192,14 @@ Write seven days as `168h`, not unsupported `7d`.
 
 ### Startup
 
-```mermaid
-flowchart TD
-    S["Start incident processing"] --> N["Select namespace and initialize watcher"]
-    N --> L["Synchronize initial ConfigMap state"]
-    L --> V{"Synchronization succeeded and full config is valid?"}
-    V -->|No| F["Fail startup with an error"]
-    V -->|Yes| R["Publish initial valid snapshot"]
-    R --> H["Recover assignments and candidates from 7 days of history"]
-    H --> Q{"Initialization succeeded?"}
-    Q -->|No| F
-    Q -->|Yes| RUN["Begin live processing"]
-```
+1. Start incident processing.
+2. Select namespace and initialize the watcher.
+3. Synchronize the initial ConfigMap state.
+4. If synchronization fails or the full config is invalid, fail startup with an error.
+5. Otherwise, publish the initial valid snapshot.
+6. Recover assignments and candidates from 7 days of history.
+7. If initialization fails, fail startup with an error.
+8. Otherwise, begin live processing.
 
 When incident processing is enabled, missing or invalid initial rules must fail
 startup; there is no silent built-in fallback. `--disable-incidents` bypasses this
@@ -224,19 +208,14 @@ partially reconstructed state.
 
 ### Runtime
 
-```mermaid
-flowchart TD
-    ACTIVE["Processing with valid snapshot V1"] --> EVENT["ConfigMap event"]
-    EVENT --> PRESENT{"ConfigMap and required key present?"}
-    PRESENT -->|No| KEEP["Log problem, retain V1, continue processing"]
-    PRESENT -->|Yes| VALID{"Whole candidate config valid?"}
-    VALID -->|No| KEEP
-    VALID -->|Yes| SAME{"Definitions unchanged?"}
-    SAME -->|Yes| NOOP["Keep snapshot and matcher state"]
-    SAME -->|No| NEW["Publish valid snapshot V2"]
-    NEW --> ADOPT["Adopt new rules without rewriting assignments"]
-    ADOPT --> CONT["Continue processing, new assignments use V2"]
-```
+1. Process with valid snapshot V1.
+2. A ConfigMap event arrives.
+3. If the ConfigMap or required key is missing, log the problem, retain V1, and continue processing.
+4. Otherwise, if the whole candidate config is invalid, log the problem, retain V1, and continue processing.
+5. Otherwise, if the definitions are unchanged, keep the snapshot and matcher state.
+6. Otherwise, publish valid snapshot V2.
+7. Adopt new rules without rewriting assignments.
+8. Continue processing; new assignments use V2.
 
 **Target, D4:** invalid YAML, missing keys, excessive windows and other validation
 failures are logged and ignored. Deletion retains the last valid rules; it is not
