@@ -109,16 +109,22 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	}
 	slog.Info("Loaded alerts range", "len", len(alertsRange))
 
-	// Warm up the groups collection with historical alerts.
-	slog.Info("Processing historical alerts")
-	groups.processHistoricalAlerts(alertsRange)
-
 	slog.Info("Loading health map range")
 	healthMapRV, err := p.loader.LoadVectorRange(ctx, ClusterHealthComponentsMap, start, end, step)
 	if err != nil {
 		return err
 	}
 	slog.Info("Loaded health map range", "len", len(healthMapRV))
+
+	// Recover known assignments from history before replaying, so the replay
+	// preserves them instead of reclassifying the alerts under current rules.
+	slog.Info("Recovering historical assignments")
+	groups.assignments = correlateHistoricalAssignments(alertsRange, healthMapRV)
+	slog.Info("Recovered historical assignments", "count", len(groups.assignments))
+
+	// Warm up the groups collection with historical alerts.
+	slog.Info("Processing historical alerts")
+	groups.processHistoricalAlerts(alertsRange)
 
 	slog.Info("Updating group-ids")
 	groups.UpdateGroupUUIDs(healthMapRV)

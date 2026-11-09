@@ -3,6 +3,7 @@ package processor
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -222,6 +223,12 @@ func watchdogAlert(i Interval) bool {
 type GroupsCollection struct {
 	Groups []*GroupMatcher
 	rules  *RulesSnapshot
+
+	// assignments holds alert-to-incident assignments recovered from
+	// history. An alert matching an assignment keeps its incident even when
+	// the current rules would group it differently.
+	assignments []*historicalAssignment
+	forcedRoots map[string]*GroupMatcher
 }
 
 func (gc *GroupsCollection) AddGroup(g *GroupMatcher) {
@@ -290,7 +297,14 @@ func (gc *GroupsCollection) tryMatchIntervals(intervals []Interval) ([]GroupedIn
 	var ret []GroupedInterval
 	var unmatched []Interval
 	for _, i := range intervals {
-		matchedGroup := gc.bestMatch(i)
+		var matchedGroup *GroupMatcher
+		if root := gc.forcedAssignment(i); root != nil {
+			// A recovered historical assignment is immutable: it takes
+			// precedence over rule evaluation.
+			matchedGroup = root
+		} else {
+			matchedGroup = gc.bestMatch(i)
+		}
 		if matchedGroup == nil {
 			unmatched = append(unmatched, i)
 			continue
@@ -422,6 +436,84 @@ func (gc *GroupsCollection) matches(interval Interval) []match {
 /// with the previous incidents. This allows preserving the group UUIDs
 /// after the restart of the analyzer.
 
+// historicalAssignment records an unambiguous alert-to-incident assignment
+// recovered from history: an alert with these labels, observed within this
+// time range, belonged to the incident with this ID.
+type historicalAssignment struct {
+	labels model.LabelSet
+	start  model.Time
+	end    model.Time
+	id     string
+}
+
+// correlateHistoricalAssignments recovers alert-to-incident assignments by
+// correlating the complete labels of historical alerts with the exported
+// incident mappings. The mappings retain only a projection of the alert
+// labels, so an alert is assigned only when the evidence is unambiguous:
+// when several incidents match the same labels and time range, the alert is
+// left to the regular rules instead of receiving an arbitrary ID.
+func correlateHistoricalAssignments(alertsRange, healthMapRV prom.RangeVector) []*historicalAssignment {
+	if len(healthMapRV) == 0 {
+		return nil
+	}
+	prevIncidents := newPreviousIncidentsMatcher(healthMapRV)
+	var assignments []*historicalAssignment
+	for _, interval := range MetricsIntervals(alertsRange) {
+		ids := make(map[string]struct{})
+		for _, candidate := range prevIncidents.atTime(interval.End) {
+			if matched, _ := candidate.matcher.Matches(interval.Metric); matched {
+				ids[candidate.uuid] = struct{}{}
+			}
+		}
+		if len(ids) != 1 {
+			continue
+		}
+		for id := range ids {
+			assignments = append(assignments, &historicalAssignment{
+				labels: interval.Metric, start: interval.Start, end: interval.End, id: id,
+			})
+		}
+	}
+	return assignments
+}
+
+// forcedAssignment returns the root matcher of the incident an alert was
+// historically assigned to, or nil when no recovered assignment covers the
+// interval.
+func (gc *GroupsCollection) forcedAssignment(i Interval) *GroupMatcher {
+	for _, a := range gc.assignments {
+		if !maps.Equal(a.labels, i.Metric) {
+			continue
+		}
+		if i.Start < a.start.Add(-previousIncidentsTolerance) || i.Start > a.end.Add(previousIncidentsTolerance) {
+			continue
+		}
+		return gc.forcedRoot(a.id, i)
+	}
+	return nil
+}
+
+// forcedRoot returns the shared root matcher for a recovered incident ID,
+// creating it (with its temporal matchers) on first use.
+func (gc *GroupsCollection) forcedRoot(id string, i Interval) *GroupMatcher {
+	if root, ok := gc.forcedRoots[id]; ok {
+		return root
+	}
+	if gc.forcedRoots == nil {
+		gc.forcedRoots = make(map[string]*GroupMatcher)
+	}
+	root := &GroupMatcher{
+		GroupID:         id,
+		RootGroupID:     id,
+		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
+	}
+	gc.forcedRoots[id] = root
+	for _, m := range gc.rules.rootGroupMatchers(i, id) {
+		gc.AddGroup(m)
+	}
+	return root
+}
+
 type previousIncident struct {
 	matcher *common.LabelsSubsetMatcher
 	uuid    string
@@ -516,6 +608,11 @@ func (gc *GroupsCollection) UpdateGroupUUIDs(healthMapRV prom.RangeVector) {
 	prevIncidentsMatcher := newPreviousIncidentsMatcher(healthMapRV)
 
 	for _, g := range gc.Groups {
+		// Groups with a recovered assignment already carry their authoritative
+		// ID and must not be relabeled by matcher overlap.
+		if _, forced := gc.forcedRoots[g.RootGroupID]; forced {
+			continue
+		}
 		// Check if the group is still unmapped.
 		if _, ok := unmappedGroups[g.RootGroupID]; !ok {
 			continue

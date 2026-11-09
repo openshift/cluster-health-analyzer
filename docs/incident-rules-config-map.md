@@ -12,11 +12,13 @@ The feature was introduced in `eacf3dc` and reviewed against `eacf3dc^` at check
 **target** refers to the approved requirements.
 
 **Implementation status:** D1, D2, D4, D5, D6 and D7 are implemented with unit
-tests; D3 is partially implemented (live reload preserves assignments and
-regenerates candidates; restart-time identity evidence remains an open design
-item). Verification is unit-level plus lint; cluster lifecycle and long
-integration scenarios have not been rerun. A latent label-aliasing defect in
-exact matcher generation, exposed by D2, was also fixed. See the
+tests. D3 is implemented for live reload and for restart recovery based on
+unambiguous historical evidence (complete `ALERTS` labels correlated with the
+exported incident mappings); ambiguous collisions — alerts whose exported
+labels cannot distinguish them — remain an open case. Verification is
+unit-level plus lint; cluster lifecycle and long integration scenarios have
+not been rerun. A latent label-aliasing defect in exact matcher generation,
+exposed by D2, was also fixed. See the
 [intentional-difference register](#intentional-difference-register) for test
 references.
 
@@ -29,7 +31,7 @@ authentication and silence evaluation are outside this redesign.
 |---|---|---|---|
 | D1 | Unmatched alerts in one batch can receive one shared root without evaluating rules | Rules always prevail over batching; no precedence switch | Implemented |
 | D2 | `allOf` drops missing labels, potentially producing an empty selector | Every listed label is mandatory | Implemented |
-| D3 | Reload replays history; ID recovery depends on grouping selectors | Preserve known assignments; recover identity independently of grouping | Partially implemented (live reload) |
+| D3 | Reload replays history; ID recovery depends on grouping selectors | Preserve known assignments; recover identity independently of grouping | Implemented (ambiguous collisions open) |
 | D4 | Invalid updates or deletion can publish empty rules and stop metric refreshes | Keep the last valid configuration at runtime; fail startup without valid rules | Implemented |
 | D5 | Pod namespace file, otherwise `default` | Environment override → pod namespace → `default` | Implemented |
 | D6 | Positive windows above seven days are accepted | `0 < within <= 168h`, inclusive | Implemented |
@@ -429,31 +431,31 @@ with the available incident-mapping evidence, rather than using grouping selecto
 as identity. A node-only selector cannot satisfy a historical selector that also
 requires alert name, namespace and severity; a temporal matcher has no selector.
 
-### Recovery evidence is currently lossy
+### Recovery evidence is lossy, and only unambiguous evidence is trusted
 
 `cluster_health_components_map` does **not** retain every original alert label.
 `getLabelsSubset` exports namespace, alert name, severity and component-specific
-matching keys; labels such as `node` may be omitted. `UpdateGroupUUIDs` currently
-uses these exported `src_*` labels and interval overlap to find a previous ID.
+matching keys; labels such as `node` may be omitted.
 
-For example, two simultaneous alerts with the same unmapped alert name, namespace
-and severity, but different nodes, can belong to different incidents under a
-node-only rule. Their mapping series can differ only by `group_id`. Full `ALERTS`
-series still distinguish the nodes, but the mappings do not identify which ID
-belongs to which node. A first-match lookup cannot prove the original assignment.
+The implemented recovery correlates the complete `ALERTS` history with the
+exported mappings: an alert receives its historical `group_id` only when
+exactly one incident matches its labels and observation time
+(`correlateHistoricalAssignments`). Recovered assignments are forced during the
+chronological replay, take precedence over rule evaluation, and are exempt from
+`UpdateGroupUUIDs` relabeling.
 
-The assumption that historical data is available does not resolve this loss of
-identity information. Establish sufficient identity evidence and add a collision
-test before claiming reliable recovery. The exact evidence format and any metric
-changes are unresolved; do not silently treat an ambiguous prior assignment as
-unassigned, pick an arbitrary ID, or add a new store as part of this documentation.
-The existing loader is the intended starting point, not proof that its current
-payload can satisfy every recovery case.
+When two simultaneous alerts share the same exported labels but belong to
+different incidents, the evidence cannot distinguish them: neither receives a
+forced assignment, and both fall back to rule-driven grouping
+(`TestHistoricalAssignmentCorrelation`). This is the remaining open case; it is
+not silently resolved by picking an arbitrary ID. Enriching the exported
+evidence (for example preserving more source labels) would close it, at the
+cost of a metric-schema decision.
 
-Replay candidate observations in time order. Do not prepopulate matchers with
-later, disjoint observations before processing earlier unassigned alerts, as that
-can change eligibility and precedence. This does not prohibit legitimate interval
-overlap or negative end-anchored distance.
+Replay still processes candidate observations in time order. Do not prepopulate
+matchers with later, disjoint observations before processing earlier unassigned
+alerts, as that can change eligibility and precedence. This does not prohibit
+legitimate interval overlap or negative end-anchored distance.
 
 The decisive test is a restart **after a rule change**: A and B above must retain
 ID-123 even though current rules applied from scratch would separate them.
@@ -601,7 +603,7 @@ legacy behavior.
 |---|---|---|---|---|
 | D1 | Different-node alerts in one batch are implicitly grouped | Node-only rules separate them | `TestRulesOverrideInitialBatchGrouping` | Implemented |
 | D2 | Missing node reduces `allOf` to a namespace selector | Generate no matcher for that strategy | `TestAllOfRequiresEveryLabel` | Implemented |
-| D3 | History replay, reduced selectors and lossy exported identity labels can prevent reliable ID recovery | Preserve assignments across update/restart; new alerts may join existing incidents; distinguish colliding historical mappings | `TestProcessorReloadsMatchersOnRuleChange` (live reload); restart recovery open | Partially implemented |
+| D3 | History replay, reduced selectors and lossy exported identity labels can prevent reliable ID recovery | Preserve assignments across update/restart; new alerts may join existing incidents; distinguish colliding historical mappings | `TestProcessorReloadsMatchersOnRuleChange`, `TestRestartAfterRuleChangePreservesAssignments`, `TestHistoricalAssignmentCorrelation` | Implemented (ambiguous collisions open) |
 | D4 | Invalid/deleted configuration stalls updates | Keep last valid rules and fresh metrics; fail invalid startup | `TestRulesWatcherRebuildInvalidatesChangedDefinitions`, `TestRulesWatcherObservesUpdatesAndDeletion`; lifecycle integration pending | Implemented (unit level) |
 | D5 | No explicit namespace override | Environment → pod namespace → `default` | `TestRulesNamespacePrecedence` | Implemented |
 | D6 | Windows above seven days accepted | Reject `within > 168h` | `TestRuleWindowMaximum` | Implemented |
