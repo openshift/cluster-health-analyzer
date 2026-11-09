@@ -256,18 +256,63 @@ specific strategy. Another configured strategy can still legitimately match.
 
 ### Mandatory `allOf` labels — D2
 
-```mermaid
-flowchart TD
-    A["Alert observation"] --> X{"Excluded by this strategy?"}
-    X -->|Yes| SKIP["Generate no matcher for this strategy"]
-    X -->|No| ALL{"Every configured allOf label present?"}
-    ALL -->|No| SKIP
-    ALL -->|Yes| BUILD["Build selector containing all required label/value pairs"]
-    BUILD --> IN["Evaluate incoming alert"]
-    IN --> CHECK{"All required values match, and strategy allows alert?"}
-    CHECK -->|Yes| TIME["Check temporal eligibility"]
-    CHECK -->|No| REJECT["Reject this candidate"]
+This section has its own heading because D2 documents an **intentional
+difference** of the new rules system (not yet merged into main production)
+relative to the hardcoded pre-rules grouping. Before the rules system, the
+grouping matcher was always the full label set of the starting alert, so a
+selector could never be narrowed by absent labels. With configurable rules,
+`allOf` restricts the selector to the listed labels — and the agreed design is
+that **every listed label is mandatory**: when any is missing from the
+observation, the strategy generates no matcher and simply cannot group that
+alert. This fail-closed strictness is deliberate (covered by
+`TestAllOfRequiresEveryLabel`), not a defect.
+
+Background: when CHA sees an alert, it groups it into an existing incident
+(candidate) rather than a new one when the alert "matches" that candidate. Each
+strategy of a rule defines what "matches" means through a **matcher** — a
+label selector generated from the alert that started the candidate. Incoming
+alerts are compared against that selector to decide grouping.
+
+Concretely, a matcher is a `LabelsSubsetMatcher` holding a small set of
+label/value pairs (`pkg/common/labels.go`). It matches when every listed label
+is present with exactly that value:
+
+```go
+// pkg/common/labels.go
+type LabelsSubsetMatcher struct {
+    Labels model.LabelSet // e.g. {"namespace": "openshift-monitoring", "node": "worker-1"}
+}
+
+func (l LabelsSubsetMatcher) Matches(labels model.LabelSet) (bool, []model.LabelName) {
+    for k, m := range l.Labels {
+        if v, ok := labels[k]; !ok || v != m {
+            return false, nil // label absent or value differs -> no match
+        }
+    }
+    return true, keys
+}
 ```
+
+With a rule strategy `allOf: [namespace, node]`, an alert observation such as
+`{namespace="openshift-monitoring", node="worker-1", alertname="KubeNodeDown"}`
+produces the matcher `{namespace="openshift-monitoring", node="worker-1"}` —
+`alertname` is simply left out of the selector, because only the listed labels
+are mandatory. Generation happens in `alertGroupMatchers`
+(`pkg/processor/rules.go`), which skips the strategy entirely when any listed
+label is missing from the observation.
+
+For each alert observation, a strategy proceeds as follows:
+
+1. If the observation is excluded by this strategy, generate no matcher for it —
+   the strategy cannot group anything.
+2. Otherwise, if any configured `allOf` label is missing from the observation,
+   generate no matcher for it either: a partial match is not allowed.
+3. Otherwise, build a matcher containing all required label/value pairs.
+4. When a new alert arrives, group it under the candidate only if:
+   - every required label value matches, and
+   - the strategy allows the alert (not excluded).
+5. A candidate that passes label and strategy checks is then assessed for temporal
+   eligibility (is it recent enough to still be grouped with?).
 
 An observation missing `node` must not reduce `allOf: [namespace, node]` to a
 namespace-only matcher, or turn `allOf: [node]` into an empty match-all selector.
@@ -297,6 +342,11 @@ order, but matcher generation may involve map iteration. This is not a guarantee
 global tie policy; investigate ambiguous ties rather than inventing a new one.
 
 ### Default strategy order
+
+The **Reference** column says which point in the candidate's time interval the window is measured from:
+
+- **End:** the window ends at the candidate's last observed interval end. The candidate stays eligible only while time has not moved more than the window past that end.
+- **Sliding start:** the window ends at the most recently observed interval start (the reference moves forward as new observations arrive). This keeps a candidate eligible as long as activity continues, even when the full history is longer than the window.
 
 | Order | Strategy | Window | Reference |
 |---|---|---|---|
