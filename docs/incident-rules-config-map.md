@@ -1,44 +1,21 @@
 # Incident rules via ConfigMap
 
-This is the consolidated reference for ConfigMap-based incident grouping: the
-configuration format, current implementation, approved design changes, diagrams,
-compatibility decisions and verification plan. It supersedes
-`RULES_IMPLEMENTATION_PLAN.md` and `docs/custom-rules.md`.
+Cluster Health Analyzer (CHA) groups related firing Prometheus alerts into
+**incidents**. Each incident has a `group_id`, exposed in the
+`cluster_health_components_map` metric. Incident rules let you configure which
+alerts belong together using labels, time windows, and precedence, without
+changing the CHA binary.
 
-## Status and scope
-
-The feature was introduced in `eacf3dc` and reviewed against `eacf3dc^` at checkout
-`fa3b247`. In this document, **current** refers to that reviewed implementation;
-**target** refers to the approved requirements.
-
-**Implementation status:** D1, D2, D4, D5, D6 and D7 are implemented with unit
-tests. D3 is implemented for live reload and for restart recovery based on
-unambiguous historical evidence (complete `ALERTS` labels correlated with the
-exported incident mappings); ambiguous collisions — alerts whose exported
-labels cannot distinguish them — remain an open case. Verification is
-unit-level plus lint; cluster lifecycle and long integration scenarios have
-not been rerun. A latent label-aliasing defect in exact matcher generation,
-exposed by D2, was also fixed. See the
-[intentional-difference register](#intentional-difference-register) for test
-references.
-
-Unless marked **current**, diagrams describe the **target design**. Boxes are
-logical responsibilities, not new services, packages, databases or public APIs.
-Reuse the existing processor, watcher and history loader. Component health, TLS,
-authentication and silence evaluation are outside this redesign.
-
-| ID | Current behavior (at review) | Approved target | Status |
-|---|---|---|---|
-| D1 | Unmatched alerts in one batch can receive one shared root without evaluating rules | Rules always prevail over batching; no precedence switch | Implemented |
-| D2 | `allOf` drops missing labels, potentially producing an empty selector | Every listed label is mandatory | Implemented |
-| D3 | Reload replays history; ID recovery depends on grouping selectors | Preserve known assignments; recover identity independently of grouping | Implemented (ambiguous collisions open) |
-| D4 | Invalid updates or deletion can publish empty rules and stop metric refreshes | Keep the last valid configuration at runtime; fail startup without valid rules | Implemented |
-| D5 | Pod namespace file, otherwise `default` | Environment override → pod namespace → `default` | Implemented |
-| D6 | Positive windows above seven days are accepted | `0 < within <= 168h`, inclusive | Implemented |
-| D7 | Four-day history; pruning based on `Modified` | Seven-day history and strategy-aware pruning; no incident lifetime cap | Implemented |
+CHA reads rules from a Kubernetes ConfigMap and watches it for updates. This guide
+explains configuration, grouping behavior, verification, and known limits.
+Component health evaluation, TLS, authentication, and silence evaluation are
+configured separately.
 
 ## Contents
 
+- [Compatibility expectations](#compatibility-expectations)
+  - [Introduced behavioural changes](#introduced-behavioural-changes)
+  - [Known limitations](#known-limitations)
 - [Configuration format and deployment](#configuration-format-and-deployment)
 - [Processing responsibilities](#processing-responsibilities)
 - [Namespace selection](#namespace-selection)
@@ -50,22 +27,62 @@ authentication and silence evaluation are outside this redesign.
 - [Seven-day horizon and pruning](#seven-day-horizon-and-pruning)
 - [Verification and compatibility](#verification-and-compatibility)
 - [Implementation map and open details](#implementation-map-and-open-details)
-- [Branch history and provenance](#branch-history-and-provenance)
+
+## Compatibility expectations
+
+> **Review the introduced behavioural changes and known limitations before
+> deploying the feature.** The default rules preserve the main grouping strategies,
+> not every historical grouping outcome or incident ID.
+
+The defaults retain exact matching, matching by selected labels ("fuzzy" matching),
+and time-only matching. Reusing an incident ID when an alert returns after resolving
+is also existing behavior: the earlier hardcoded implementation already had an
+exact fallback window of five days, now expressed as `within: 120h`.
+
+### Introduced behavioural changes
+
+| Area | Behavior introduced by the feature |
+|---|---|
+| [Initial configuration](#startup) | Incident processing requires a valid ConfigMap at startup; there is no silent built-in fallback. |
+| [Custom rules](#configuration-format-and-deployment) | Configured rules replace the default strategy list rather than extending it. Default matching paths and fallback windows are not implicitly retained. |
+| [Batch grouping](#rules-prevail-over-batching) | Alerts group only through rules, not merely because they arrived together. |
+| [Live configuration updates](#runtime) | Valid changes are adopted without restarting CHA. Invalid updates or ConfigMap deletion retain the last valid snapshot; a restart still requires valid configuration. |
+| [Namespace](#namespace-selection) | Explicit environment override takes precedence over pod discovery and `default`. |
+| [Time windows](#validation-and-configuration-lifecycle) | Matching windows are configurable up to seven days; larger values are rejected. |
+| [History and pruning](#seven-day-horizon-and-pruning) | Startup queries seven days of history instead of four. Pruning uses each strategy's time reference to avoid discarding still-eligible matchers. |
+
+### Known limitations
+
+- **Historical identity recovery — inherited limitation.** Ambiguous exported
+  labels or missing history can prevent ID recovery. See
+  [recovery evidence](#recovery-evidence-is-lossy) for the cause and behavior.
+- **Live reload does not guarantee assignment preservation.** Only currently
+  firing alerts seed the rebuild, and matcher time references reset. See
+  [reload limitations](#reload-implementation-and-limits).
+- **Fully tied candidates have no guaranteed global tie-breaker.** See
+  [candidate ranking](#ranking-eligible-candidates).
+- **Cluster-level verification remains necessary.** Unit tests do not establish
+  real lifecycle behavior, long-running recovery, or operator packaging correctness.
+  See [verification and compatibility](#verification-and-compatibility).
 
 ## Configuration format and deployment
 
 ### Source and schema
 
-Rules are supplied through a standard ConfigMap:
+CHA reads one ConfigMap named `cluster-health-analyzer-config`, using its
+`rules.yaml` data key. No custom resource definition (CRD) or additional
+configuration service is required.
 
-- Name: `cluster-health-analyzer-config`.
-- Data key: `rules.yaml`.
-- No custom CRD or additional configuration service.
+A **rule** is a named, prioritized list of **strategies**. Each strategy specifies
+which labels to compare and how far apart observations may be. Strategies are
+alternatives: an alert need not satisfy every strategy, but must pass the label,
+exclusion, and time checks of the strategy used to match it.
 
-The following is a complete node-only configuration example, using the namespace
-of the repository manifests. It replaces the configured strategy list; it is not
-an addition to implicit defaults. The D1/D2 fixes are still required for the
-reviewed implementation to honor its intended behavior in all cases.
+This complete example groups alerts by node within a 24-hour window. Alerts on
+different nodes do not group together through this configuration, even if they
+share a namespace or arrive together. Alerts without a `node` label cannot match
+this strategy; they are still processed, but may receive a new incident ID on
+each observation because there is no fallback strategy.
 
 ```yaml
 apiVersion: v1
@@ -87,593 +104,706 @@ data:
 
 | Field | Meaning |
 |---|---|
-| `rules` | Nonempty list of rule definitions |
-| `name` | Required rule name; used in precedence ordering |
-| `priority` | Optional signed 32-bit integer, default `0`; lower values win |
-| `strategies` | Nonempty ordered list; earlier strategies within a rule take precedence |
-| `match` | Required: one of `exact: true`, `allOf: [keys]`, `anyOf: [keys]`, or `{}` for temporal matching |
-| `within` | Positive duration using `h`, `m`, `s`, maximum 32 characters; target maximum `168h` |
-| `from` | Required `start` or `end`; selects the strategy's time reference |
-| `excludeAlerts` | Optional label selectors; matching alerts are excluded from this strategy, not globally |
+| `rules` | Required, nonempty list of rules. |
+| `name` | Required, nonempty rule name; also used to break priority ties. Use distinct names for predictable ordering. |
+| `priority` | Optional signed 32-bit integer; defaults to `0`. Lower values take precedence. |
+| `strategies` | Required, nonempty ordered list. Earlier strategies take precedence within a rule. |
+| `match` | Required. Use exactly one of `exact: true`, `allOf: [keys]`, `anyOf: [keys]`, or an empty map `{}` for time-only matching. |
+| `within` | Required positive duration, at most `168h` (seven days). Use `h`, `m`, or `s`, including combinations such as `1h30m`; maximum string length is 32 characters. |
+| `from` | Required: `start` or `end`. Selects the matcher's time reference, explained below. |
+| `excludeAlerts` | Optional list of label/value selectors that exclude alerts from this strategy only. Not supported with `match: {}`. |
 
-Time references belong to an individual matcher, not the whole incident.
-Currently, `from: start` uses that matcher's `Modified` value, updated to the
-matched interval's start; `from: end` uses its maximum observed `End`. These are
-not necessarily an alert's original firing time: live batches use the processing
-timestamp as both interval start and end. Creating a matcher initializes both
-references from its observation.
+The label operators compare values taken from observed alerts; `allOf: [node]`
+names a label key, not a fixed node value. See
+[operator semantics](#operator-semantics) for examples.
 
-The current schema rejects `excludeAlerts` on a temporal strategy. Each exclusion
-selector requires all of its label/value pairs to match; matching any selector
-excludes the alert from that strategy.
+The parser and file loader are in [rules.go](../pkg/processor/rules.go).
+`LoadRulesFile`, used by simulation and tests, accepts either a complete ConfigMap
+manifest or the bare `rules.yaml` payload. It is not a server fallback when the
+ConfigMap is absent.
 
-`LoadRulesFile`, used by simulation and tests, accepts either a full ConfigMap
-manifest or the bare `rules.yaml` payload. This does not provide an automatic
-server fallback when a ConfigMap is absent.
+### Understanding `from: start` and `from: end`
+
+When evaluating whether an alert can join an incident, a strategy asks: **is this
+alert close enough in time to an observation already associated with that
+incident?** `from` selects the reference time, and `within` sets how much later
+the incoming alert may start.
+
+First, distinguish the alert's firing history from its incident assignment:
+
+| Historical metric | What it tells CHA |
+|---|---|
+| `ALERTS` | Which alert was observed firing, with what labels, and when. Consecutive samples form an observation interval. |
+| `cluster_health_components_map` | Which incident an alert was assigned to, through its `group_id` and exported source labels. This is separate evidence used to recover assignments after a restart. |
+
+**An alert observation interval is not an incident's lifetime or the period when
+an incident metric was published.** The alert samples alone do not tell CHA
+whether an incident was previously published.
+
+CHA stores label comparisons and timing information in a **matcher** associated
+with an incident. One incident can have several matchers, each with its own time
+reference:
+
+| Setting | Reference used by that matcher |
+|---|---|
+| `from: start` | The start of its most recently matched observation. This moves when the matcher is updated; it is not fixed to the incident's creation time. |
+| `from: end` | The latest observed end recorded by the matcher. This is not the incident's resolution time. |
+
+#### Example: replaying historical alerts after a restart
+
+Compare two strategies that both use `allOf: [node]` and `within: 30m`, differing
+only in `from`:
+
+1. Historical `ALERTS` samples show **alert A on worker-1 firing from 10:00 to
+   11:00**. CHA reconstructs that observation interval.
+2. During replay, CHA associates A with an incident and creates a node matcher
+   using A's interval. The incident ID may be recovered from historical mappings
+   or newly assigned; that does not change this time calculation.
+3. **Alert B on worker-1 starts at 11:20** and needs an assignment. Can it join
+   through A's matcher?
+
+Assume no other observations update this matcher before B is evaluated, and both
+alerts pass the strategy's label and exclusion checks.
+
+```text
+Time             10:00             10:30             11:00       11:20 11:30
+                 |                 |                 |           |     |
+A in ALERTS      [===================================]
+from: start      ^-----------------|                             x
+from: end                                            ^-----------o-----|
+
+^  Matcher's reference     |  Inclusive cutoff (reference + 30m)
+o  B passes time check     x  B fails time check
+```
+
+| Strategy | Calculation for B | Result through this matcher |
+|---|---|---|
+| `from: start` | 11:20 − 10:00 = 80 minutes | Too late: the cutoff was 10:30. |
+| `from: end` | 11:20 − 11:00 = 20 minutes | Within the window: the cutoff is 11:30. |
+
+Passing the time check makes this matcher eligible, subject to
+[candidate ranking](#ranking-eligible-candidates). The dashed lines show the
+30-minute offset, not the entire eligible interval: overlapping observations can
+also pass the `from: end` time check.
+
+#### How live processing differs
+
+Unlike historical replay, each live poll creates an observation with
+**`start = end = processing timestamp`**. If A remains firing, the next poll observes
+the same alert instance again; no new failure or reactivation is needed.
+
+When a live observation selects a matcher, `from: start` moves its reference to
+that timestamp; `from: end` advances its latest end if newer. Thus, neither uses
+an alert's original firing or eventual resolution time during these updates.
+
+Compare two configurations differing only in `from`, both with `within: 30m`.
+Assume polls at 10:45 and 11:00 update the same matcher in each configuration,
+with no further updates before B arrives at 11:20. Both configurations then have
+the same reference and cutoff:
+
+```text
+Time             10:45             11:00             11:15 11:20       11:30
+                 |                 |                 |     |           |
+A live polls     *                 *
+After 10:45 poll ^-----------------------------------|     x
+After 11:00 poll                   ^-----------------------o-----------|
+
+*  A observed firing (observation start = end = poll time)
+^  Reference for either from: start or from: end
+|  Inclusive cutoff (reference + 30m)
+o  B at 11:20 passes time check     x  B at 11:20 would be too late
+```
+
+The 11:00 update moves the cutoff from 11:15 to 11:30, allowing B to pass the time
+check. These poll times are illustrative, not a configured polling interval.
+Historical replay can use observations with different start and end times, so it
+does not necessarily produce the same windows as live polling.
+
+Source: `MetricsIntervals`, `ProcessAlertsBatch`, `referenceTime`, and `update`
+in [incidents.go](../pkg/processor/incidents.go).
+
+#### The role of `within`
+
+`within` limits how far an incoming observation's start can be from a **particular
+matcher's reference time**. It is not a maximum alert or incident lifetime, and it
+applies whether the incident still has firing alerts or not. The time check happens
+**before** updating the matcher: an observation outside its window cannot renew it
+to make itself eligible. A matcher selected and updated every 30 seconds can keep
+its window moving indefinitely, but other matchers in the same incident may expire.
+
+For example, using the default strategies:
+
+1. Alert A creates an incident with exact and 15-minute temporal matchers.
+2. A remains firing. Each live poll selects the exact matcher, updating its shared
+   exact timeline but not the temporal matcher's reference.
+3. If no observations update the temporal matcher, its window expires once more
+   than 15 minutes have elapsed from its reference, even though A is still firing.
+4. Alert B arrives with different labels. It cannot join through that expired
+   temporal matcher merely because the incident remains active. Another eligible
+   strategy could still allow it to join.
+
+If all alerts resolve, matcher updates also stop; a later alert can reuse the
+incident only through a still-eligible matcher or an applicable recovered
+assignment. Resolution is therefore one reason updates stop, not a prerequisite
+for `within` to matter. See `matches`, `bestMatch`, and `tryMatchIntervals` in
+[incidents.go](../pkg/processor/incidents.go).
 
 ### Manifests and RBAC
 
-- [Default rules](../manifests/backend/09_incident_rule_defaults.yaml): the shipped
-  ConfigMap and default strategy order.
-- [Configuration RBAC](../manifests/backend/10_incident_rule_rbac.yaml): `get`,
-  `list`, `watch` on ConfigMaps with
-  `resourceNames: [cluster-health-analyzer-config]`. The watcher restricts its
-  list/watch using the ConfigMap name field selector.
-- The draft `08_incident_rule_crd.yaml` is no longer part of the ConfigMap design.
+To configure a deployment:
 
-Kubernetes stores the ConfigMap but does not validate the embedded incident-rule
-schema. CHA validates the payload. This avoids CRD installation and lifecycle
-management, but makes correct startup and invalid-update handling essential.
+1. Choose the namespace using the [selection rules](#namespace-selection).
+2. Save the example as `incident-rules.yaml`, adjusting its namespace and rules.
+   Alternatively, start with the [shipped defaults](../manifests/backend/09_incident_rule_defaults.yaml).
+3. Ensure the CHA ServiceAccount can `get`, `list`, and `watch` the named
+   ConfigMap. The [RBAC manifest](../manifests/backend/10_incident_rule_rbac.yaml)
+   provides these permissions for the repository deployment. The watcher uses a
+   `metadata.name` field selector to restrict its list/watch requests.
+4. Apply the configuration before starting CHA, or update it while CHA is running:
 
-Production is managed by cluster-observability-operator (COO) in
-`openshift-cluster-observability-operator`. Verify that COO creates the ConfigMap
-in the selected namespace and grants the actual CHA ServiceAccount access.
-Do not assume COO uses repository manifests unchanged. A production failure has
-not been demonstrated.
+   ```sh
+   oc apply -f incident-rules.yaml
+   ```
+
+5. Check CHA logs for validation errors and confirm that incident metrics reflect
+   newly arriving and resolving alerts. Kubernetes accepting the ConfigMap does
+   not mean CHA accepted the embedded rules.
+
+The repository manifests use `openshift-cluster-health-analyzer`. For deployments
+managed by cluster-observability-operator (COO), check the generated workload,
+selected namespace, ConfigMap, and ServiceAccount permissions rather than assuming
+the operator uses these manifests unchanged.
 
 ## Processing responsibilities
 
-```mermaid
-flowchart TD
-    CM["ConfigMap: rules.yaml"] --> W["Watch and validate configuration"]
-    W --> R["Last valid immutable rules snapshot"]
-    H["Historical alerts and incident metrics: last 7 days"] --> I["Recover assignments where historical evidence identifies them"]
-    I --> A["Known assignments"]
-    H --> O["Replay observations in time order, preserving known assignments"]
-    A --> O
-    O --> C["Build rule-dependent candidate matchers"]
-    R --> C
-    F["Current firing alerts"] --> K{"Assignment already known?"}
-    A --> K
-    K -->|Yes| P["Keep the existing group_id"]
-    K -->|No| G["Evaluate current rules against candidate incidents"]
-    C --> G
-    G --> N["Join a matching incident or create a new one"]
-    N --> A
-    P --> U["Update relevant observations and matcher state"]
-    N --> U
-    U --> C
-    U --> M["Publish refreshed incident metrics"]
-```
+The following terms distinguish configuration from runtime state:
 
-Keep two responsibilities separate:
+| Term | Meaning |
+|---|---|
+| Observation | An alert's labels and the time or interval when CHA observed it. |
+| Assignment | An alert's membership in an incident, identified by `group_id`. |
+| Matcher | Label selectors and timing state generated by a strategy. An incident can have several matchers. |
+| Candidate | An incident considered for an incoming alert through one of its matchers. |
+| Rules snapshot | A complete, validated configuration that does not change after publication. |
 
-- **Identity:** which incident an already-assigned alert belongs to.
-- **Grouping:** whether an unassigned alert can join an incident under current
-  rules, or needs a new incident.
+The processing flow is:
 
-Complete labels and historical membership provide identity evidence even when
-custom rules retain only a node selector or no label selectors. Do not add hidden
-exact grouping strategies to recover identity. Establish the existing identity
-semantics for repeated observations, replay and label changes before choosing the
-implementation; do not silently introduce a different alert-identity definition.
+1. Watch the ConfigMap, validate its payload, and retain the latest valid rules
+   snapshot.
+2. At startup, load seven days of alert and incident-mapping history from the
+   metrics backend.
+3. Recover assignments supported by historical evidence, then replay observations
+   chronologically to build matchers under the loaded rules.
+4. During live processing, query firing alerts and evaluate them against available
+   candidates. Recovered historical assignments take precedence when applicable.
+5. Join a matching incident or create a new incident, then update the relevant
+   matcher state.
+6. Publish the resulting incident metrics and prune expired matcher state.
+
+**Identity and grouping are different concerns.** Identity answers “which incident
+was this alert assigned to?” Grouping answers “which incident can it join under
+these rules?” A node-only selector can group alerts without identifying each one;
+a time-only matcher has no labels at all. Preserving identity across
+[rule changes](#non-retroactive-rule-changes) or
+[restarts](#restart-and-identity-recovery) therefore requires evidence beyond the
+grouping selectors. See the [implementation map](#implementation-map-and-open-details)
+for the code behind each responsibility.
 
 ## Namespace selection
 
-**Target, D5:**
+CHA selects the ConfigMap namespace in this order:
 
-Proposed environment variable: `INCIDENT_RULES_NAMESPACE`; finalize its name
-before implementation. The precedence is confirmed. Pod discovery reads
-`/var/run/secrets/kubernetes.io/serviceaccount/namespace`.
+1. The nonempty, whitespace-trimmed `INCIDENT_RULES_NAMESPACE` environment variable.
+2. The pod namespace read from
+   `/var/run/secrets/kubernetes.io/serviceaccount/namespace`, if readable and nonempty.
+3. `default`.
 
-**Current:** only pod-file discovery and the `default` fallback exist. The
-kubeconfig context's namespace is not used. Pod and ConfigMap in the same namespace
-already fit automatic discovery; the override supports local execution and
-explicit operator configuration. Do not hardcode the COO namespace as the only
-supported location.
+The kubeconfig context's namespace is **not** used. In a pod, putting the ConfigMap
+in the pod's namespace normally requires no override. For local execution, set the
+variable explicitly; the usual Kubernetes credentials and metrics-backend access
+are still required:
+
+```sh
+INCIDENT_RULES_NAMESPACE=openshift-cluster-health-analyzer make run
+```
+
+For a deployment, the equivalent container environment entry is:
+
+```yaml
+env:
+  - name: INCIDENT_RULES_NAMESPACE
+    value: openshift-cluster-health-analyzer
+```
+
+Source: `watchNamespace` in [rules_watcher.go](../pkg/processor/rules_watcher.go).
 
 ## Validation and configuration lifecycle
 
-Validate the complete candidate configuration before publication. Do not activate
-only the valid subset of an invalid configuration.
+CHA validates the entire payload before making it available to the processor.
+It never activates only the valid rules from an invalid configuration.
+Kubernetes validates the ConfigMap object, but CHA validates the embedded YAML.
 
-Preserve required-name/strategy checks, unknown-field rejection, supported
-operators, unique nonempty label-key lists, valid exclusion selectors, supported
-`from` values, and positive duration syntax. Add the D6 upper bound of `168h`.
-Write seven days as `168h`, not unsupported `7d`.
+Validation rejects unknown fields, multiple YAML documents, missing names or
+strategies, unsupported or combined operators, empty or duplicate label keys,
+invalid exclusion selectors, unsupported `from` values, and invalid durations.
+Write seven days as `168h`, not `7d`. A duration of `168h` is valid; `0h` and
+`168h1m` are not.
 
 ### Startup
 
-1. Start incident processing.
-2. Select namespace and initialize the watcher.
-3. Synchronize the initial ConfigMap state.
-4. If synchronization fails or the full config is invalid, fail startup with an error.
-5. Otherwise, publish the initial valid snapshot.
-6. Recover assignments and candidates from 7 days of history.
-7. If initialization fails, fail startup with an error.
-8. Otherwise, begin live processing.
+When incident processing is enabled:
 
-When incident processing is enabled, missing or invalid initial rules must fail
-startup; there is no silent built-in fallback. `--disable-incidents` bypasses this
-watcher and processor initialization. Initialization errors must not publish
-partially reconstructed state.
+1. Select the namespace and start the ConfigMap watcher.
+2. Wait up to 30 seconds for the watcher's initial cache synchronization.
+3. Require a valid rules snapshot. Missing configuration, a missing `rules.yaml`
+   key, invalid rules, or synchronization failure causes startup to fail.
+4. Load history and reconstruct grouping state. A loading or initialization error
+   also causes startup to fail; partially reconstructed state is not published.
+5. Start live incident processing and serve metrics.
+
+`--disable-incidents` skips this initialization. See
+[server.go](../pkg/server/server.go) for startup wiring.
 
 ### Runtime
 
-1. Process with valid snapshot V1.
-2. A ConfigMap event arrives.
-3. If the ConfigMap or required key is missing, log the problem, retain V1, and continue processing.
-4. Otherwise, if the whole candidate config is invalid, log the problem, retain V1, and continue processing.
-5. Otherwise, if the definitions are unchanged, keep the snapshot and matcher state.
-6. Otherwise, publish valid snapshot V2.
-7. Adopt new rules without rewriting assignments.
-8. Continue processing; new assignments use V2.
+| ConfigMap event | Result |
+|---|---|
+| Valid, changed rules | Publish a new snapshot; the processor adopts it on a subsequent processing pass. |
+| Metadata-only update or equivalent parsed rules | Keep the existing snapshot and matcher state. |
+| Invalid payload or missing `rules.yaml` | Log the problem and keep the last valid snapshot. |
+| ConfigMap deletion | Keep the last valid snapshot; deletion does not disable incidents. |
+| ConfigMap recreated with valid rules | Resume accepting valid updates. |
 
-**Target, D4:** invalid YAML, missing keys, excessive windows and other validation
-failures are logged and ignored. Deletion retains the last valid rules; it is not
-an implicit disable command. Recreating the ConfigMap must allow updates to resume.
-Metadata-only changes must not invalidate matchers.
+The last valid snapshot is held in memory, not persisted as a backup. After a
+restart, a valid ConfigMap is required again even if the previous process kept
+working through an invalid update or deletion.
 
-Failure to prepare candidate state must not expose partial state. Publishing a
-snapshot does not itself prove successful processor adoption. Each grouping pass
-must use a coherent combination of rules and the candidates built for those rules;
-do not mix V2 definitions with V1 matchers. The activation/retry mechanism remains
-to be designed and tested. A responding metrics endpoint is insufficient: arrivals
-and resolutions must continue updating metrics while invalid updates are ignored.
+ConfigMap observation and processor adoption are separate events: the watcher log
+alone does not prove that grouping has changed. The
+[reload path](#reload-implementation-and-limits) describes how the processor adopts
+the snapshot and rebuilds its matchers.
 
-**Before the fix:** invalid input or deletion could publish an empty snapshot.
-Processing then stopped refreshing incident metrics while old values remained
-exposed. The implemented watcher keeps the last valid snapshot instead;
-startup without any valid snapshot still fails.
+Invalid configuration updates do not themselves stop metric refreshes. Verify
+freshness by observing an alert arrive and another resolve; a responding metrics
+endpoint can still expose stale data if processing fails for another reason.
 
 ## Operators and candidate selection
 
 ### Operator semantics
 
-| Operator | Matcher generation and matching contract |
+| Operator | Behavior |
 |---|---|
-| `exact: true` | Preserve existing full-label selector behavior |
-| `allOf: [keys]` | Target: generate a selector only when every named label is present; incoming alerts must satisfy every required label/value |
-| `anyOf: [keys]` | Generate alternatives for configured labels present in the observation; one matching alternative is sufficient; no present keys means no matcher |
-| `match: {}` | Explicit temporal matching, without label selectors; not an implicit batch fallback |
+| `exact: true` | Create a full-label **subset selector**, not a label-set equality check. Incoming alerts must contain every selected label with the same value; additional labels are allowed. |
+| `allOf: [keys]` | Create a selector only if every listed label is present. An incoming alert must match all selected values. |
+| `anyOf: [keys]` | Create a separate alternative for each listed label that is present. Matching any one alternative is sufficient. If none are present, create no matcher. |
+| `match: {}` | Match by time only, with no label selector. Temporal matchers are attached to newly created incidents, subject to the [Watchdog safeguard](#watchdog-safeguard). |
 
-The current exact implementation uses a full-label **subset selector**, not
-symmetric label-set equality: additional incoming labels do not themselves
-invalidate it. No change to that behavior was agreed.
+Selectors use literal label/value equality, not regular expressions. See
+[LabelsSubsetMatcher](../pkg/common/labels.go) and matcher generation in
+[rules.go](../pkg/processor/rules.go).
 
-Exclusions apply to both matcher generation and incoming-alert evaluation for the
-specific strategy. Another configured strategy can still legitimately match.
+Exclusions apply both when generating matchers and when evaluating incoming alerts.
+All pairs within one exclusion selector must match; matching any selector excludes
+the alert from that strategy. Other strategies remain available. For example,
+this strategy groups by alert name **or** namespace but excludes one monitoring
+alert from that matching path:
 
-### Mandatory `allOf` labels — D2
-
-This section has its own heading because D2 documents an **intentional
-difference** of the new rules system (not yet merged into main production)
-relative to the hardcoded pre-rules grouping. Before the rules system, the
-grouping matcher was always the full label set of the starting alert, so a
-selector could never be narrowed by absent labels. With configurable rules,
-`allOf` restricts the selector to the listed labels — and the agreed design is
-that **every listed label is mandatory**: when any is missing from the
-observation, the strategy generates no matcher and simply cannot group that
-alert. This fail-closed strictness is deliberate (covered by
-`TestAllOfRequiresEveryLabel`), not a defect.
-
-Background: when CHA sees an alert, it groups it into an existing incident
-(candidate) rather than a new one when the alert "matches" that candidate. Each
-strategy of a rule defines what "matches" means through a **matcher** — a
-label selector generated from the alert that started the candidate. Incoming
-alerts are compared against that selector to decide grouping.
-
-Concretely, a matcher is a `LabelsSubsetMatcher` holding a small set of
-label/value pairs (`pkg/common/labels.go`). It matches when every listed label
-is present with exactly that value:
-
-```go
-// pkg/common/labels.go
-type LabelsSubsetMatcher struct {
-    Labels model.LabelSet // e.g. {"namespace": "openshift-monitoring", "node": "worker-1"}
-}
-
-func (l LabelsSubsetMatcher) Matches(labels model.LabelSet) (bool, []model.LabelName) {
-    for k, m := range l.Labels {
-        if v, ok := labels[k]; !ok || v != m {
-            return false, nil // label absent or value differs -> no match
-        }
-    }
-    return true, keys
-}
+```yaml
+# One entry under a rule's strategies list.
+- match:
+    anyOf: [alertname, namespace]
+  within: 24h
+  from: start
+  excludeAlerts:
+    - alertname: Watchdog
+      namespace: openshift-monitoring
 ```
 
-With a rule strategy `allOf: [namespace, node]`, an alert observation such as
-`{namespace="openshift-monitoring", node="worker-1", alertname="KubeNodeDown"}`
-produces the matcher `{namespace="openshift-monitoring", node="worker-1"}` —
-`alertname` is simply left out of the selector, because only the listed labels
-are mandatory. Generation happens in `alertGroupMatchers`
-(`pkg/processor/rules.go`), which skips the strategy entirely when any listed
-label is missing from the observation.
+### Mandatory `allOf` labels
 
-For each alert observation, a strategy proceeds as follows:
+With `allOf: [namespace, node]`, an allowed observation produces this selector:
 
-1. If the observation is excluded by this strategy, generate no matcher for it —
-   the strategy cannot group anything.
-2. Otherwise, if any configured `allOf` label is missing from the observation,
-   generate no matcher for it either: a partial match is not allowed.
-3. Otherwise, build a matcher containing all required label/value pairs.
-4. When a new alert arrives, group it under the candidate only if:
-   - every required label value matches, and
-   - the strategy allows the alert (not excluded).
-5. A candidate that passes label and strategy checks is then assessed for temporal
-   eligibility (is it recent enough to still be grouped with?).
+```text
+Alert:    {alertname="KubeNodeDown", namespace="openshift-monitoring", node="worker-1"}
+Selector: {namespace="openshift-monitoring", node="worker-1"}
+```
 
-An observation missing `node` must not reduce `allOf: [namespace, node]` to a
-namespace-only matcher, or turn `allOf: [node]` into an empty match-all selector.
-An empty value is distinct from an absent label; no nonempty-value requirement was
-introduced. Test individual strategies in isolation so fallback cannot mask errors.
+If `node` is absent, no matcher is generated for this strategy: it never reduces
+to namespace-only matching or an empty, match-all selector. An empty label value
+is different from an absent label; a present empty value is compared literally.
+Other strategies remain available when `allOf` cannot match.
 
 ### Ranking eligible candidates
 
-Preserve the branch's ordering, from most to least significant:
+A candidate is eligible only if it passes label, exclusion, and time checks.
+The incoming interval must not start before the matcher's initial start. Its
+distance from the selected reference must be **at most** `within`; the boundary
+is inclusive. Overlapping historical intervals can have a negative distance with
+`from: end`, which does not by itself disqualify a match.
 
-```mermaid
-flowchart LR
-    C["Eligible candidates"] --> P["Lower rule priority"]
-    P --> N["Rule name, lexical order"]
-    N --> O["Earlier strategy position"]
-    O --> T["Smaller temporal distance"]
-    T --> B["Choose best candidate"]
-```
+Among eligible candidates, compare these criteria in order:
 
-Eligibility includes labels, exclusions, window checks and rejection of candidates
-whose start is later than the incoming interval's start. End-anchored overlapping
-intervals may have negative temporal distance; do not introduce a nonnegative
-requirement.
+1. Lower rule `priority`.
+2. Rule `name` in lexical order.
+3. Earlier position in that rule's `strategies` list.
+4. Smaller temporal distance from the matcher's reference time.
 
-Current selection uses a stable sort. Equal-ranked candidates retain their input
-order, but matcher generation may involve map iteration. This is not a guaranteed
-global tie policy; investigate ambiguous ties rather than inventing a new one.
+Thus, an earlier time-only strategy can beat a later exact strategy; operator
+names do not confer precedence. Selection uses a stable sort, but candidate input
+order can depend on map iteration. Fully tied candidates do not have a guaranteed
+global tie-breaker. Avoid relying on ties to select a particular incident.
+
+Source: `matches` and `bestMatch` in [incidents.go](../pkg/processor/incidents.go).
 
 ### Default strategy order
 
-The **Reference** column says which point in the candidate's time interval the window is measured from:
-
-- **End:** the window ends at the candidate's last observed interval end. The candidate stays eligible only while time has not moved more than the window past that end.
-- **Sliding start:** the window ends at the most recently observed interval start (the reference moves forward as new observations arrive). This keeps a candidate eligible as long as activity continues, even when the full history is longer than the window.
+The [default ConfigMap](../manifests/backend/09_incident_rule_defaults.yaml)
+contains one rule with these strategies, in order:
 
 | Order | Strategy | Window | Reference |
 |---|---|---|---|
-| 1 | Full-label exact selector | `24h` | End |
-| 2 | `allOf: [namespace, alertname, service, job, container]` | `24h` | Sliding start |
-| 3 | `anyOf: [alertname, namespace]` | `24h` | Sliding start |
-| 4 | Explicit temporal strategy | `15m` | Sliding start |
-| 5 | Full-label exact fallback | `120h` | End |
+| 1 | Full-label `exact` selector | `24h` | Latest observed end |
+| 2 | `allOf: [namespace, alertname, service, job, container]` | `24h` | Most recent matched start |
+| 3 | `anyOf: [alertname, namespace]` | `24h` | Most recent matched start |
+| 4 | Explicit time-only strategy | `15m` | Most recent matched start |
+| 5 | Full-label `exact` fallback | `120h` | Latest observed end |
 
-The fuzzy strategy excludes `Watchdog` and
-`AlertmanagerReceiversNotConfigured` in `openshift-monitoring`. Within one rule,
-exact strategies with the same `from` and exclusion definitions share the timeline
-created for an observation, so the exact fallback sees updated ends. Preserve this
-behavior when rebuilding candidates; there is no general timeline sharing across
-all strategies or rules.
+Strategy 3, also called fuzzy matching, excludes `Watchdog` and
+`AlertmanagerReceiversNotConfigured` in `openshift-monitoring` from that strategy
+only.
 
-Strict `allOf` changes default behavior for alerts lacking one of its listed
-labels. Record that intentional difference; do not hide a legacy partial-label
-exception under the same operator name.
+Within one rule, exact strategies with the same `from` and exclusions share the
+timeline generated for an observation. Updating the first exact matcher therefore
+keeps the exact fallback's end current. This sharing does not apply to every
+strategy or across rules.
 
 ## Rules prevail over batching
 
-**Target, D1:**
+A **batch** is the set of alerts processed together in one pass. Being in the same
+batch is not a reason to share an incident. The grouping process is:
 
-```mermaid
-flowchart TD
-    B["Next alert in batch"] --> KNOWN{"Assignment already known?"}
-    KNOWN -->|Yes| KEEP["Keep assigned incident"]
-    KNOWN -->|No| EVAL["Evaluate current rules against eligible candidates"]
-    EVAL --> FOUND{"Matching candidate exists?"}
-    FOUND -->|Yes| JOIN["Assign to winning incident"]
-    FOUND -->|No| NEW["Create a new incident and assign alert"]
-    KEEP --> UPDATE["Update relevant observations and candidate state"]
-    JOIN --> UPDATE
-    NEW --> UPDATE
-    UPDATE --> MORE{"More alerts in batch?"}
-    MORE -->|Yes| B
-    MORE -->|No| DONE["Publish results"]
-```
+1. Try each observation against existing candidates, honoring any applicable
+   recovered assignment first.
+2. Collect observations that did not match.
+3. Process those unmatched observations individually. Check candidates created
+   earlier in this unmatched set before creating a new incident.
+4. Add the generated matchers so subsequent observations and batches can use them.
 
-Candidates created within a batch must be available to subsequent unassigned
-alerts. Batch membership alone never justifies grouping.
+With only `allOf: [node]` and no preexisting candidates:
 
-With only `allOf: [node]` and no existing matches:
-
-| Inputs in one batch | Required result |
+| Inputs in one batch | Result |
 |---|---|
 | A on worker-1, B on worker-2 | Separate incidents |
 | A on worker-1, C on worker-1 | One incident |
 
-Reverse inputs and repeat in separate batches at the same evaluation time for
-these simple cases. Compare partitions, not random UUIDs. This does not imply
-that arbitrary complex rule sets are globally order-independent.
+These simple partitions are unchanged by reversing the inputs or processing them
+in separate batches at the same evaluation time. This is not a guarantee of
+order independence for arbitrary competing rules. Explicit time-only strategies,
+such as the default 15-minute strategy, can still group nearby alerts.
 
-No batching-precedence option will be added. Explicit temporal rules may still
-group nearby alerts. Preserve and test Watchdog safeguards: current code suppresses
-new temporal root matchers for the entire unmatched batch containing
-`Watchdog` in `openshift-monitoring`, not just for Watchdog itself. Watchdog may
-still match an existing temporal candidate; this is not a global exclusion.
-Removing implicit batching must not accidentally remove these distinctions.
+### Watchdog safeguard
+
+`Watchdog` normally fires continuously to check the monitoring pipeline; seeing it
+is not evidence of a new failure. After a restart or a gap in monitoring data, CHA
+may see Watchdog and several unrelated alerts together. Their appearance in the
+same poll does not mean their problems started together.
+
+The safeguard avoids grouping those alerts **just because they appeared together**.
+It applies only when Watchdog could not join an existing incident, as explained
+below. CHA recognizes Watchdog by both `alertname="Watchdog"` and
+`namespace="openshift-monitoring"`; the same name in another namespace does not
+trigger the safeguard.
+
+#### Example: alerts arriving together
+
+Suppose CHA has no existing incidents or recovered assignments, and the only
+configured strategy groups by time:
+
+```yaml
+strategies:
+  - match: {}
+    within: 15m
+    from: start
+```
+
+Each row is a separate run, with no earlier incidents and all its alerts observed
+together:
+
+| Alerts in the batch | Result |
+|---|---|
+| A (a disk alert) and B (a network alert) | One incident: the time-only strategy allows B to join A. |
+| Watchdog, A, and B | Three incidents: the safeguard prevents time-only grouping for all three alerts, not just Watchdog. |
+
+A **temporal matcher** lets another alert join an incident based only on how close
+it is in time. In the Watchdog case, CHA does not create these matchers for any of
+the three incidents. That prevents time-only joins both within this batch and
+later, while those matchers remain absent.
+
+If label-based strategies are also configured, A and B can still share an
+incident through those strategies. **The safeguard does not require every alert
+to have its own incident.**
+
+#### When the safeguard applies
+
+1. CHA first tries to assign alerts to existing incidents using normal matching
+   or recovered assignments.
+2. It collects the alerts that still need an incident. These are the **unmatched
+   alerts**.
+3. If Watchdog is among them, CHA does not create temporal matchers for any new
+   incidents created from that set. Label-based strategies still apply.
+
+**Seeing Watchdog in a poll is not enough to trigger the safeguard.** If it already
+joined an existing incident in step 1, this check does nothing for the remaining
+alerts. Its position in the batch does not matter: CHA checks all unmatched alerts
+before creating incidents.
+
+#### What changed with configurable rules?
+
+**The Watchdog protection already existed before rules.** The main grouping change
+concerns batches where Watchdog does not trigger the safeguard:
+
+| Situation | Before rules | With rules |
+|---|---|---|
+| Unmatched alerts without Watchdog | CHA put them in one shared incident simply because they were in the same batch. | They share an incident only if a configured strategy matches. |
+| Unmatched alerts including Watchdog | No automatic shared incident; label-based grouping remained available, and new temporal matchers were made inactive. | Label-based grouping remains available, but new temporal matchers are not created at all. |
+
+The safeguard still matters because an explicit `match: {}` strategy can reproduce
+time-only grouping even though implicit batch grouping has been removed.
+See the [pre-rules implementation](https://github.com/openshift/cluster-health-analyzer/blob/673e3176f442b8904c16a8586908460a7407438a/pkg/processor/incidents.go)
+for the earlier behavior.
+
+#### Limits and configurable exclusions
+
+- **Existing matchers are unaffected.** Watchdog can join an existing incident
+  through a temporal matcher if eligible. The safeguard neither deletes that
+  matcher nor guarantees that Watchdog is isolated.
+- **Rule reload and historical recovery are separate paths.** They can create
+  temporal matchers for incidents containing Watchdog without running this check.
+  The safeguard above applies to creating incidents from unmatched alerts, not
+  every way CHA rebuilds its state.
+- **Label exclusions are a different mechanism.** The defaults use `excludeAlerts`
+  to keep Watchdog and `AlertmanagerReceiversNotConfigured` out of the
+  `anyOf: [alertname, namespace]` strategy. Before rules, those exclusions were
+  hardcoded. Keep them in custom rules if you want that behavior. Removing them
+  does not turn off the built-in batch safeguard, which is triggered only by
+  Watchdog.
+
+Code: `watchdogAlert`, `addIntervalsGroups`, `newRootGroup`, and `forcedRoot` in
+[incidents.go](../pkg/processor/incidents.go); `adoptRules` in
+[processor.go](../pkg/processor/processor.go). Tests cover temporal-matcher
+suppression and exclusions in [rules_schema_test.go](../pkg/processor/rules_schema_test.go),
+and label-based grouping with Watchdog in [incidents_test.go](../pkg/processor/incidents_test.go).
 
 ## Non-retroactive rule changes
 
-**Target, D3:**
+The intended behavior is to preserve existing assignments while using new rules
+to assign alerts that do not yet have an incident. “New” means **unassigned**, not
+merely first observed after the configuration update. An existing incident may
+accept new members; a rule edit is not a request to split or merge historical
+incidents.
 
-```mermaid
-sequenceDiagram
-    participant W as Rules watcher
-    participant P as Incident processor
-    participant A as Known assignments
-    participant C as Candidate matchers
-    W->>P: Valid rules V2 available
-    P->>A: Preserve all known memberships and IDs
-    P->>C: Prepare V2 candidates from required observations within 7 days
-    Note over A,C: Preserve assignments and adopt rules with their candidates coherently
-    P->>P: Receive already-assigned alert A
-    P->>A: Recover existing ID-123
-    P->>P: Receive unassigned alert C
-    P->>C: Evaluate C using V2
-    C-->>P: Existing incident ID-123 is eligible
-    P->>A: Record C assigned to ID-123
-```
+For example, assume A and B are firing and share an incident from namespace-based
+rules. After changing to node-only rules, with observations inside the window:
 
-“New” means **not yet assigned**, not simply first observed after an update.
-
-Example, initially grouped by namespace, with observations inside the window:
-
-| Alert | Namespace | Node | Before update | After node-only rules |
+| Alert | Namespace | Node | Before update | Intended result |
 |---|---|---|---|---|
 | A | production | worker-1 | ID-123 | ID-123 |
 | B | production | worker-2 | ID-123 | ID-123 |
 | New C | production | worker-1 | Unassigned | May join ID-123 |
-| New D | production | worker-3 | Unassigned | New incident if no candidate matches |
+| New D | production | worker-3 | Unassigned | New incident if no other candidate matches |
 
-Existing incidents may accept new members under current rules. Do not split
-ID-123 into node-specific incidents or merge existing identities retroactively.
+### Reload implementation and limits
 
-A new strategy may need labels or older observations that V1's matchers discarded.
-For example, replacing a one-hour rule with a seven-day node rule may require
-observations no longer represented by the old candidates. Retain or reload the
-necessary evidence within the seven-day horizon without reassigning existing
-members. Rebuilding only from reduced V1 selectors is not sufficient in general.
+The live reload path currently:
 
-**Before the fix:** rule changes called `InitGroupsCollection`, replaying history
-under the new rules. The implemented `adoptRules` replaces that path: it rebuilds
-candidate matchers from currently assigned firing alerts without rewriting any
-historical membership.
+1. Reads the latest valid rules snapshot before loading the next live alert batch.
+2. Creates a replacement collection containing the new rules and matchers generated
+   from the most recently processed firing alerts, with their existing incident IDs.
+3. Swaps in the completed collection. Preparation errors leave the old collection
+   intact; a pass never combines new rules with old-rule matchers.
+
+This supports the simple node-based example, but it is **not a general identity
+preservation guarantee**:
+
+- **No historical rebuild:** resolved alerts are absent, and increasing a window
+  or introducing label keys does not reload older observations. A re-firing alert
+  may receive a new incident ID.
+- **Reset timing:** new matcher references use the reload time, not the original
+  observation times.
+- **Matcher-dependent identity:** there is no independent live assignment lookup.
+  Missing required labels or competing matchers can prevent reuse of an old ID.
+
+These are implementation gaps, not configuration options. Full preservation needs
+identity independent of matching and sufficient observations within the history
+horizon. See `recordAssignments` and `adoptRules` in
+[processor.go](../pkg/processor/processor.go), and the reload tests in
+[processor_test.go](../pkg/processor/processor_test.go).
 
 ## Restart and identity recovery
 
-**Target, D3/D7:**
+Restart reconstruction uses `ALERTS` firing history and
+`cluster_health_components_map` assignment history; it does not use a separate
+incident database.
 
-```mermaid
-sequenceDiagram
-    participant P as Incident processor
-    participant H as History loader
-    participant I as Identity recovery
-    participant G as Grouping state
-    P->>H: Load ALERTS and incident mappings for last 7 days
-    H-->>P: Historical observations and group_id evidence
-    P->>I: Correlate full alerts with historical mapping evidence
-    I-->>P: Recoverable memberships and IDs
-    Note over P,I: Ambiguous evidence is an unresolved recovery case, not a new alert
-    P->>G: Replay observations in time order, preserving recovered assignments
-    Note over P,G: Build candidates as observations are replayed, grouping only unassigned alerts
-    G-->>P: Complete reconstructed state after recovery requirements are satisfied
-    P->>P: Publish initialized state and resume processing
-```
+Initialization proceeds as follows:
 
-Use complete historical `ALERTS` labels and intervals to correlate observations
-with the available incident-mapping evidence, rather than using grouping selectors
-as identity. A node-only selector cannot satisfy a historical selector that also
-requires alert name, namespace and severity; a temporal matcher has no selector.
+1. Query both histories for the last seven days, with a one-minute query step.
+2. Reconstruct alert observation intervals from the samples.
+3. Compare complete historical alert labels with the source-label selectors in
+   incident mappings. Correlation checks mapping times around the alert interval's
+   end, with a ten-minute tolerance.
+4. Recover an assignment only when the evidence identifies exactly one incident.
+5. Replay observations in chronological order. A recovered assignment takes
+   precedence over rule matching for the corresponding labels and time range.
+   Other observations use the configured rules.
+6. Reconcile remaining matcher IDs against historical mappings. IDs established
+   by recovered assignments are exempt from this remapping.
+7. Install the completed grouping collection and resume live processing.
 
-### Recovery evidence is lossy, and only unambiguous evidence is trusted
+Source: `InitGroupsCollection` in [processor.go](../pkg/processor/processor.go),
+and `correlateHistoricalAssignments`, `forcedAssignment`, and `UpdateGroupUUIDs`
+in [incidents.go](../pkg/processor/incidents.go).
 
-`cluster_health_components_map` does **not** retain every original alert label.
-`getLabelsSubset` exports namespace, alert name, severity and component-specific
-matching keys; labels such as `node` may be omitted.
+### Recovery evidence is lossy
 
-The implemented recovery correlates the complete `ALERTS` history with the
-exported mappings: an alert receives its historical `group_id` only when
-exactly one incident matches its labels and observation time
-(`correlateHistoricalAssignments`). Recovered assignments are forced during the
-chronological replay, take precedence over rule evaluation, and are exempt from
-`UpdateGroupUUIDs` relabeling.
+The exported metric retains namespace, alert name, severity, and labels used for
+component matching, not every original alert label. For example, `node` may be
+absent. See `getLabelsSubset` in [types.go](../pkg/processor/types.go).
 
-When two simultaneous alerts share the same exported labels but belong to
-different incidents, the evidence cannot distinguish them: neither receives a
-forced assignment, and both fall back to rule-driven grouping
-(`TestHistoricalAssignmentCorrelation`). This is the remaining open case; it is
-not silently resolved by picking an arbitrary ID. Enriching the exported
-evidence (for example preserving more source labels) would close it, at the
-cost of a metric-schema decision.
+If two simultaneous alerts have identical exported source labels but belong to
+different incidents, neither receives a forced assignment. Normal grouping and
+subsequent matcher-ID reconciliation apply, so **original IDs are not guaranteed**.
+Missing or expired history also prevents reliable recovery; a longer query horizon
+cannot recreate data the backend no longer has.
 
-Replay still processes candidate observations in time order. Do not prepopulate
-matchers with later, disjoint observations before processing earlier unassigned
-alerts, as that can change eligibility and precedence. This does not prohibit
-legitimate interval overlap or negative end-anchored distance.
+**Both limitations predate configurable rules.** The earlier implementation exported
+the same restricted labels and selected the first matching historical incident
+without checking uniqueness. The new correlation step adds unambiguous forced
+assignments before that existing reconciliation path; it does not eliminate all
+ambiguity. Custom rules can expose the problem by separating alerts using a label
+such as `node` that their mappings omit. See `correlateHistoricalAssignments` and
+`previousIncidentsMatcher.match` in [incidents.go](../pkg/processor/incidents.go).
 
-The decisive test is a restart **after a rule change**: A and B above must retain
-ID-123 even though current rules applied from scratch would separate them.
-Recover known assignments before grouping remaining unassigned observations.
+`TestRestartAfterRuleChangePreservesAssignments` in
+[processor_test.go](../pkg/processor/processor_test.go) covers recovery of ID-123
+for the [rule-change example](#non-retroactive-rule-changes) with unambiguous history.
+It does not establish recovery for ambiguous mappings or arbitrary label changes.
 
-Assume required history is available. Recovery without necessary historical data
-is outside the agreed guarantee. Loader/initialization failures must not publish
-partial state.
+Chronological replay matters: preloading matchers from later, disjoint
+observations could change which candidates were eligible for an earlier alert.
 
 ## Seven-day horizon and pruning
 
-**Target, D6/D7:**
+Three different time concepts apply:
 
-| Concept | Contract |
+| Concept | Behavior |
 |---|---|
-| Matching window | `0 < within <= 168h`, inclusive upper bound |
-| Historical query horizon | Last seven days at startup or required reconstruction |
-| Incident lifetime | Not capped at seven days |
+| Matching window | Each strategy requires `0 < within <= 168h`; the upper boundary is inclusive. |
+| Historical query horizon | Startup requests the last seven days. Live reload currently does not repeat this query. |
+| Incident lifetime | Not capped at seven days; recent observations can keep an older incident eligible. |
 
-```mermaid
-flowchart TD
-    S["Evaluate matcher for an unassigned alert"] --> F{"Incoming start before matcher start?"}
-    F -->|Yes| NO["Not eligible"]
-    F -->|No| ANCHOR{"Strategy reference"}
-    ANCHOR -->|from: end| ENDREF["Latest relevant observed end"]
-    ANCHOR -->|from: start| STARTREF["Start of most recent matched alert"]
-    ENDREF --> DIST["Distance = incoming start minus reference"]
-    STARTREF --> DIST
-    DIST --> WINDOW{"Distance within configured window?"}
-    WINDOW -->|No| NO
-    WINDOW -->|Yes| LABELS["Apply remaining strategy checks and ranking"]
-```
+[Time-reference examples](#understanding-from-start-and-from-end) explain how
+windows move; [candidate selection](#ranking-eligible-candidates) defines the
+eligibility checks. Retention below determines when matcher state is removed,
+not whether an incoming alert may match it.
 
-`from: start` preserves the matcher-specific sliding reference, not incident
-creation time. Exact-boundary matches remain eligible. Keep the future-start
-rejection and end-overlap behavior described above.
+### Retention and pruning
 
-Preserving an alert's assigned ID does not mean refreshing every matcher attached
-to that incident. Currently, an exact match updates its shared exact timeline but
-does not automatically renew temporal or fuzzy windows. Define and test equivalent
-observation updates for the new identity path; otherwise a continuously firing
-assigned alert could keep an unrelated temporal candidate alive indefinitely.
+Pruning removes old matchers from memory. Retention is measured from the same
+strategy-specific reference used for matching:
+
+- Exact strategies retain state for `max(120h, within)`.
+- Other strategies retain state for `max(24h, within)`.
+- State is removed only after that retention period has elapsed.
+
+Retained state does not extend matching beyond `within`. Using the end reference
+for end-anchored strategies prevents an old start timestamp from discarding a
+matcher whose end is still recent. See retention setup in
+[rules.go](../pkg/processor/rules.go) and `PruneGroups` in
+[incidents.go](../pkg/processor/incidents.go).
 
 ### Recovery example
 
-```mermaid
-flowchart LR
-    OLD["Day -6: A on worker-1 creates ID-123, then resolves"] --> NOW["Day 0: new B on worker-1"]
-    NOW --> LIVE["Uninterrupted process: eligible under a 168h node rule"]
-    NOW --> RESTART["Restart: load 7 days and recover ID-123 plus its candidate"]
-    LIVE --> SAME["B joins ID-123"]
-    RESTART --> SAME
-```
+Assume a `168h` node strategy and sufficient, unambiguous history:
 
-The current four-day query omits available data for A. Seven-day loading fixes the
-query horizon, but does not replace identity recovery. An incident created ten
-days ago may retain its ID and accept new alerts based on recent observations.
+1. Six days ago, alert A on worker-1 created ID-123 and then resolved.
+2. Today, alert B on worker-1 arrives within the strategy's window.
+3. An uninterrupted process can match B to ID-123 using the retained candidate.
+4. After a restart, seven-day loading can recover ID-123 and reconstruct its
+   candidate, allowing B to join it as well.
 
-Pruning must not remove a still-eligible end-anchored matcher solely because
-`Modified` is old. Retaining bookkeeping must not extend matches beyond `within`.
-Review retention with shared exact-strategy timelines; the requirement is an
-eligibility invariant, not an already-verified replacement pruning formula.
+An incident created ten days ago can similarly retain its ID through recent
+observations. Its original creation need not fall inside the query horizon.
+The startup horizon is defined in [server.go](../pkg/server/server.go).
 
 ## Verification and compatibility
 
-```mermaid
-flowchart TD
-    CONTRACT["Approved behavior and decision IDs"] --> UNIT["Focused unit tests"]
-    CONTRACT --> DIFF["Legacy differential scenarios"]
-    CONTRACT --> E2E["Dedicated integration instance"]
-    UNIT --> STRAT["Isolated operators, combinations, batch order and boundaries"]
-    UNIT --> HIST["Populated history: restart, reload, restart after reload"]
-    DIFF --> CLASS{"Expected behavior category?"}
-    CLASS -->|Compatibility| EQUAL["Assert equivalent normalized partitions"]
-    CLASS -->|Registered intentional change| NEW["Assert the explicit new result"]
-    CLASS -->|Unregistered difference| INVESTIGATE["Investigate, do not silently exclude"]
-    E2E --> LIFE["Real ConfigMap lifecycle and metric freshness"]
-    E2E --> RESTART["Persistent IDs through real restart and reload"]
-    E2E --> EXISTING["Retain regular and long default suites"]
-```
+### Automated coverage
 
-### Required coverage
+The following are existing tests, not a claim that every lifecycle scenario is
+covered or that cluster-level verification has passed:
 
-| Area | Minimum scenarios |
+| Area | Test references |
 |---|---|
-| Strategies | Complete/missing labels, exclusions, isolated behavior and legitimate fallback |
-| Batches | Same/different nodes, reversed order, within-batch candidates, Watchdog present/absent |
-| Identity | Populated history with default, node-only and temporal-only rules; restart after rule change; different-node alerts with identical exported source labels; chronological replay |
-| Runtime configuration | Valid → invalid → valid → deleted → recreated; metadata-only no-op; coherent rule/candidate adoption on failure or rapid successive updates |
-| Startup | Missing/invalid configuration fails; loader errors do not publish partial state |
-| Namespace | Override, pod-file and `default` fallback; actual COO packaging/RBAC |
-| Time | Before/at/after boundaries, maximum accepted/rejected windows, pruning interleavings; assigned exact re-observations must not implicitly renew other strategies |
-| History | Available data between four and seven days old; older incidents with recent observations; longer windows or new label keys requiring evidence discarded by old matchers |
-| Differential | Independent names/namespaces, competing candidates, missing labels, empty batches and order variations |
+| Parsing, exclusions, priority, windows, shared exact timelines | `TestParseRuleValidation`, `TestExcludedAlertsCannotMatchExistingFuzzyMatcher`, `TestRulePriorityPrecedesStrategyOrder`, `TestRuleWindowConfiguration`, `TestRuleWindowMaximum`, `TestExactFallbackKeepsLatestObservation` in [rules_schema_test.go](../pkg/processor/rules_schema_test.go) |
+| Mandatory labels and batch grouping | `TestAllOfRequiresEveryLabel`, `TestRulesOverrideInitialBatchGrouping` in [rules_test.go](../pkg/processor/rules_test.go) |
+| Last-valid configuration and namespace selection | `TestRulesWatcherStartRequiresValidRules`, `TestRulesWatcherRebuildInvalidatesChangedDefinitions`, `TestRulesWatcherObservesUpdatesAndDeletion`, `TestRulesNamespacePrecedence` in [rules_watcher_test.go](../pkg/processor/rules_watcher_test.go) |
+| Reload and historical identity | `TestProcessorReloadsMatchersOnRuleChange`, `TestProcessorFailedReloadDoesNotPublishPartialState`, `TestRestartAfterRuleChangePreservesAssignments`, `TestHistoricalAssignmentCorrelation` in [processor_test.go](../pkg/processor/processor_test.go) |
+| Startup failure without rules | `TestStartServerFailsBeforeServingWithoutRules` in [server_test.go](../pkg/server/server_test.go) |
+| Strategy-aware pruning | `TestPruningRespectsStrategyReference` in [rules_test.go](../pkg/processor/rules_test.go), `TestMatcherRetentionUsesStrategyReference` in [rules_schema_test.go](../pkg/processor/rules_schema_test.go) |
+
+Coverage still needs to address the [known limitations](#known-limitations), rapid
+successive updates, and loader failures. Isolate strategies so a fallback cannot
+hide a failed condition, and test before/at/after time boundaries and matcher-update
+interleavings.
 
 ### Configuration lifecycle in a real cluster
 
-```mermaid
-sequenceDiagram
-    participant T as Integration test
-    participant K as Kubernetes ConfigMap
-    participant P as CHA processor
-    participant M as Scraped incident metrics
-    T->>K: Apply valid V1
-    K-->>P: Observe V1
-    T->>P: Generate alerts through the test alert source
-    P-->>M: Publish known assignments
-    T->>K: Apply invalid update
-    K-->>P: Receive invalid configuration
-    Note over P: Log rejection and keep V1
-    T->>P: Introduce one alert and resolve another
-    P-->>M: New alert appears and resolved alert disappears
-    T->>K: Apply valid V2
-    K-->>P: Observe V2
-    Note over P: Preserve IDs and use V2 for unassigned alerts
-    T->>P: Generate an unassigned alert that distinguishes V2 from V1
-    P-->>M: Apply V2 while preserving existing IDs
-    T->>K: Delete ConfigMap
-    Note over P: Keep V2 and continue refreshing metrics
-    T->>P: Introduce one alert and resolve another
-    P-->>M: Verify fresh output under V2 despite deletion
-    T->>K: Recreate ConfigMap with valid V3
-    K-->>P: Observe V3
-    T->>P: Generate an unassigned alert that distinguishes V3 from V2
-    P-->>M: Verify valid updates are adopted again
-```
+Use a dedicated test instance with controlled history and non-notifying alert
+routing. Generate alerts through the existing Prometheus test source, not a new
+injection API. Then:
 
-Alert-generation arrows represent the real Prometheus test source, not a new
-injection API. Check metric freshness, not only readiness or HTTP success.
-Use a dedicated backend and restore test resources/configuration on success or
-failure; never mutate production or a concurrently shared CHA instance.
+1. Apply valid rules V1 and record incident IDs for known alerts.
+2. Apply an invalid update. Verify rejection in the logs, introduce one alert,
+   and resolve another. Confirm metrics continue refreshing under V1.
+3. Apply valid V2 with observably different grouping. Verify new unassigned alerts
+   use V2, and check existing IDs against the preservation limits above.
+4. Delete the ConfigMap. Introduce and resolve alerts again; processing should
+   continue with V2.
+5. Recreate the ConfigMap with valid V3. Verify new assignments demonstrate V3
+   adoption rather than continued use of V2.
+6. Test a metadata-only update: it should not reset matcher state.
+7. Restart with valid rules and populated history, including a restart after a
+   rule change. Check IDs, not only group counts. Separately test missing or
+   invalid initial configuration and history-loading failures.
+8. Restore the instance's configuration and test resources on success or failure.
 
-Keep regular smoke/TLS/crashloop integration tests and the five long scenarios:
-temporal grouping, namespace/name fuzzy matching, exact replay and severity-change
-subset matching. These cover default behavior, not every custom configuration,
-reload or multi-day boundary. Unit tests can advance time without waiting days.
+Never run this lifecycle sequence against production or a concurrently shared
+backend. Readiness and HTTP success are not sufficient checks of metric freshness.
+See the [integration guide](../test/integration/README.md) for setup and cleanup.
 
-### Intentional-difference register
+### Compatibility verification
 
-The following test names are **proposed**, not evidence of implementation.
-The baseline is the reviewed branch unless explicitly identified as inherited
-legacy behavior.
+Legacy comparison tests in [rules_test.go](../pkg/processor/rules_test.go) compare
+**normalized partitions**: which alerts share an incident, independently of random
+UUID values. Use partition comparisons for grouping equivalence, but compare
+actual IDs when testing identity preservation. Investigate unexpected differences
+rather than broadly excluding them from comparisons.
 
-| ID | Concrete previous behavior | Required outcome | Test reference | Status |
-|---|---|---|---|---|
-| D1 | Different-node alerts in one batch are implicitly grouped | Node-only rules separate them | `TestRulesOverrideInitialBatchGrouping` | Implemented |
-| D2 | Missing node reduces `allOf` to a namespace selector | Generate no matcher for that strategy | `TestAllOfRequiresEveryLabel` | Implemented |
-| D3 | History replay, reduced selectors and lossy exported identity labels can prevent reliable ID recovery | Preserve assignments across update/restart; new alerts may join existing incidents; distinguish colliding historical mappings | `TestProcessorReloadsMatchersOnRuleChange`, `TestRestartAfterRuleChangePreservesAssignments`, `TestHistoricalAssignmentCorrelation` | Implemented (ambiguous collisions open) |
-| D4 | Invalid/deleted configuration stalls updates | Keep last valid rules and fresh metrics; fail invalid startup | `TestRulesWatcherRebuildInvalidatesChangedDefinitions`, `TestRulesWatcherObservesUpdatesAndDeletion`; lifecycle integration pending | Implemented (unit level) |
-| D5 | No explicit namespace override | Environment → pod namespace → `default` | `TestRulesNamespacePrecedence` | Implemented |
-| D6 | Windows above seven days accepted | Reject `within > 168h` | `TestRuleWindowMaximum` | Implemented |
-| D7 | Four-day loading and old `Modified` can lose eligible candidates | Seven-day loading and eligibility-aware pruning | `TestPruningRespectsStrategyReference`, `TestMatcherRetentionUsesStrategyReference` | Implemented |
+Keep the standard smoke/TLS/crashloop suite and the five long grouping scenarios:
+time proximity, fuzzy namespace, fuzzy alert name, exact replay, and severity-change
+subset matching. They exercise default behavior, not all custom configurations,
+reloads, or multi-day boundaries. Unit tests can advance time without waiting days.
 
-The corresponding design sections explain each rationale. Keep concrete scenarios,
-old/new expectations, actual test locations and verification status in the register,
-synchronized with the session coverage report. Investigate unregistered differences
-rather than adding broad exclusions to legacy comparisons.
+### Commands
 
-D1/D2 deliberately change inherited behavior; D7 addresses inherited limitations.
-Do not reintroduce them merely to satisfy blanket legacy equality. Compare
-normalized incident partitions for compatible cases, and explicitly assert the
-new result for approved differences.
-
-### Commands and evidence
+From the repository root:
 
 ```sh
-# Focused packages, then the repository's race-enabled unit suite and linter.
+# Focused tests.
 go test ./pkg/processor ./pkg/server
+
+# Full race-enabled unit suite and Go linter.
 make test
 make lint
 
@@ -681,78 +811,21 @@ make lint
 go test ./test/integration/... -run '^$'
 ```
 
-Run regular, long and new lifecycle/restart integration scenarios only against an
-explicitly selected dedicated cluster; see the [integration README](../test/integration/README.md).
-Report actual results and skipped checks. Passing existing tests is not proof that
-the planned fixes have been implemented or that every regression is excluded.
+For cluster execution, follow the [integration guide](../test/integration/README.md)
+and record which checks ran or were skipped.
 
 ## Implementation map and open details
 
-| Responsibility | Existing code to change or verify |
+| Responsibility | Source |
 |---|---|
-| Validation, operator generation, shared timelines | [rules.go](../pkg/processor/rules.go) |
-| Namespace, watch events, last-valid snapshot | [rules_watcher.go](../pkg/processor/rules_watcher.go) |
-| Batching, selection, pruning, historical UUID handling | [incidents.go](../pkg/processor/incidents.go) |
-| Historical identity evidence and exported source-label projection | [types.go](../pkg/processor/types.go), [alerts.go](../pkg/processor/alerts.go) |
-| Reload adoption and historical loading | [processor.go](../pkg/processor/processor.go) |
-| Startup history horizon | [server.go](../pkg/server/server.go) |
-| Default configuration and RBAC | [defaults](../manifests/backend/09_incident_rule_defaults.yaml), [RBAC](../manifests/backend/10_incident_rule_rbac.yaml); inspect COO packaging separately |
-| Verification | [processor tests](../pkg/processor), [integration suite](../test/integration/README.md) |
+| Schema validation, matcher generation, shared exact timelines | [rules.go](../pkg/processor/rules.go) |
+| Namespace selection, ConfigMap watch, last-valid snapshot | [rules_watcher.go](../pkg/processor/rules_watcher.go) |
+| Batch grouping, selection, retention, historical ID correlation | [incidents.go](../pkg/processor/incidents.go) |
+| Alert-to-component mapping and exported source-label selection | [alerts.go](../pkg/processor/alerts.go), [types.go](../pkg/processor/types.go) |
+| Live reload, historical loading, metric updates | [processor.go](../pkg/processor/processor.go) |
+| Startup and history horizon | [server.go](../pkg/server/server.go) |
+| Default configuration and permissions | [ConfigMap](../manifests/backend/09_incident_rule_defaults.yaml), [RBAC](../manifests/backend/10_incident_rule_rbac.yaml) |
+| Tests | [Processor unit tests](../pkg/processor), [integration guide](../test/integration/README.md) |
 
-Resolve these details without changing the approved contract:
-
-- Alert identity representation for repeated observations, replay and label changes,
-  including sufficient historical evidence when exported source labels collide.
-- Chronological candidate reconstruction and matcher-specific observation updates
-  when rules change but assignments remain fixed.
-- Coherent adoption of a rules snapshot and its candidates, including preparation
-  failures and rapid updates; recovery of evidence absent from old matchers.
-- Ambiguous equal-ranked candidates; stable sort alone is not a global policy.
-- Final environment variable name and COO deployment/RBAC wiring.
-- Retention details preserving eligible shared timelines and bounded matching.
-
-The future of `simulate` is deferred: removal or cluster dependence remains open.
-Do not add packaged defaults or simulation options as part of these fixes.
-No new dependency, CRD, persistent database or batching-precedence switch is
-planned. Historical evidence sufficiency must be established before claiming the
-current persistence format can implement all identity guarantees. Retroactive
-split/merge identity policies were superseded by the non-retroactivity requirement.
-
-## Branch history and provenance
-
-The original configuration document recorded two development branches based on
-`origin/main` in the release-1.1 line. These are historical references, not current
-branch-tip claims:
-
-| Branch | Recorded fork point | Recorded tip | Role |
-|---|---|---|---|
-| `custom-rules` | `774eadb` | `ca4e5ec` | Superseded CRD draft |
-| `custom-rules-configmap` | `custom-rules` | `40a61e9` | ConfigMap-based successor |
-
-The CRD draft used `IncidentRule` in `monitoring.openshift.io/v1alpha1`, an OpenAPI
-schema with CEL validation, and a dynamic informer. Its default and RBAC manifests
-covered the custom resource. The ConfigMap successor removed the CRD installation
-and alpha lifecycle burden, switched to a standard ConfigMap informer, and narrowed
-configuration RBAC to the named ConfigMap. Validation moved into CHA's parser.
-
-Both designs externalized hardcoded incident heuristics in `pkg/processor`:
-labels, precedence and time windows. This document combines that configuration
-history with the later `eacf3dc` review and approved changes; historical behavior
-must not be mistaken for the target runtime policy.
-
-Related repository documentation:
-
-- [Architecture index](../ARCHITECTURE.md).
-- [Health analysis engine](health-analysis-engine.md).
-- [Integration test execution](../test/integration/README.md).
-
-Session records in the RedHat Obsidian vault, under `cluster-health-analyzer/`:
-
-- `Custom-Rules-Regression-Review-eacf3dc` — central session hub and original review.
-- `Custom-Rules-Must-Fix-Decisions-eacf3dc` — approved requirements and deferred work.
-- `Custom-Rules-Coverage-and-Compatibility-Decisions-eacf3dc` — tests, seven-day
-  contract and intentional differences.
-- `Custom-Rules-Implementation-Plan-eacf3dc` — consolidated implementation sequence.
-
-Update implementation and verification status when changes are actually made.
-The diagrams document decisions; they are not executable tests or proof of fixes.
+Open work is summarized under [known limitations](#known-limitations), with details
+in the linked reload, recovery, selection, and verification sections.
