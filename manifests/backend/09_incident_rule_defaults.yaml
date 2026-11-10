@@ -7,7 +7,7 @@ data:
   rules.yaml: |
     rules:
       - name: default
-        priority: 0
+        priority: 100
         strategies:
           - match:
               exact: true

@@ -48,6 +48,8 @@ func TestParseRuleValidation(t *testing.T) {
 		"duration overflow":    `{"strategies":[{"match":{},"within":"999999999999999h","from":"start"}]}`,
 		"unsupported unit":     `{"strategies":[{"match":{},"within":"1d","from":"start"}]}`,
 		"priority overflow":    `{"priority":2147483648,"strategies":[{"match":{},"within":"1h","from":"start"}]}`,
+		"priority too high":    `{"priority":101,"strategies":[{"match":{},"within":"1h","from":"start"}]}`,
+		"priority negative":    `{"priority":-1,"strategies":[{"match":{},"within":"1h","from":"start"}]}`,
 		"unsupported within":   `{"within":"2h","strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -232,10 +234,10 @@ func TestStrategyOrderOverridesOperatorCategories(t *testing.T) {
 func TestRulePriorityPrecedesStrategyOrder(t *testing.T) {
 	for _, equalPriority := range []bool{false, true} {
 		t.Run(fmt.Sprintf("equalPriority=%v", equalPriority), func(t *testing.T) {
-			first := testRules(t, `{"priority":0,"strategies":[{"match":{"exact":true},"within":"24h","from":"end"}]}`).rules[0]
-			priority := -1
+			first := testRules(t, `{"priority":50,"strategies":[{"match":{"exact":true},"within":"24h","from":"end"}]}`).rules[0]
+			priority := 10
 			if equalPriority {
-				priority = 0
+				priority = 50
 			}
 			spec, err := decodeRuleSpec([]byte(fmt.Sprintf(`{"priority":%d,"strategies":[{"match":{},"within":"1h","from":"start"}]}`, priority)))
 			require.NoError(t, err)

@@ -161,8 +161,8 @@ func TestRulesWatcherUpdatesWindowAndPriority(t *testing.T) {
 }
 
 func TestRulesWatcherMergesCustomRules(t *testing.T) {
-	defaults := testDefaultRulesConfigMap(t, "rules:\n- name: default\n  strategies:\n"+testNodeStrategy+"- name: shared\n  priority: 10\n  strategies:\n  - match:\n      allOf: [namespace]\n    within: 1h\n    from: start\n")
-	custom := testConfigMap(t, CustomRulesConfigMapName, "rules:\n- name: shared\n  priority: -10\n  strategies:\n  - match:\n      anyOf: [node]\n    within: 2h\n    from: end\n")
+	defaults := testDefaultRulesConfigMap(t, "rules:\n- name: default\n  priority: 100\n  strategies:\n"+testNodeStrategy+"- name: shared\n  priority: 10\n  strategies:\n  - match:\n      allOf: [namespace]\n    within: 1h\n    from: start\n")
+	custom := testConfigMap(t, CustomRulesConfigMapName, "rules:\n- name: shared\n  priority: 90\n  strategies:\n  - match:\n      anyOf: [node]\n    within: 2h\n    from: end\n")
 	watcher, client := testRulesWatcher(t, defaults, custom)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -171,7 +171,7 @@ func TestRulesWatcherMergesCustomRules(t *testing.T) {
 	// The custom rule with the same name replaces the default one.
 	require.Len(t, snapshot.rules, 2)
 	require.Equal(t, "shared", snapshot.rules[0].Name)
-	require.EqualValues(t, -10, snapshot.rules[0].Strategies[0].Priority)
+	require.EqualValues(t, 90, snapshot.rules[0].Strategies[0].Priority)
 	require.Equal(t, "anyOf", snapshot.rules[0].Strategies[0].operator)
 	require.Equal(t, "default", snapshot.rules[1].Name)
 
@@ -179,7 +179,7 @@ func TestRulesWatcherMergesCustomRules(t *testing.T) {
 	require.NoError(t, client.CoreV1().ConfigMaps(watchNamespace()).Delete(ctx, CustomRulesConfigMapName, metav1.DeleteOptions{}))
 	require.Eventually(t, func() bool {
 		s := watcher.GetSnapshot()
-		return len(s.rules) == 2 && s.rules[1].Name == "shared" && s.rules[1].Strategies[0].operator == "allOf" && s.rules[1].Strategies[0].Keys[0] == "namespace"
+		return len(s.rules) == 2 && s.rules[0].Name == "shared" && s.rules[0].Strategies[0].operator == "allOf" && s.rules[0].Strategies[0].Keys[0] == "namespace"
 	}, time.Second, 10*time.Millisecond)
 }
 

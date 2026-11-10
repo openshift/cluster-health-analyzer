@@ -17,6 +17,13 @@ import (
 	"github.com/openshift/cluster-health-analyzer/pkg/common"
 )
 
+// Priority bounds: lower value takes precedence. Default rules ship at
+// MaxRulePriority so user rules always match first.
+const (
+	MinRulePriority = 0
+	MaxRulePriority = 100
+)
+
 // IncidentRuleSpec configures matcher generation, precedence, and time windows.
 type IncidentRuleSpec struct {
 	Priority   int32          `json:"priority,omitempty" yaml:"priority,omitempty"`
@@ -82,6 +89,9 @@ func parseRule(name string, spec IncidentRuleSpec) (*parsedRule, error) {
 	}
 	if len(spec.Strategies) == 0 {
 		return nil, fmt.Errorf("at least one strategy is required")
+	}
+	if spec.Priority < MinRulePriority || spec.Priority > MaxRulePriority {
+		return nil, fmt.Errorf("priority must be between %d and %d", MinRulePriority, MaxRulePriority)
 	}
 
 	rule := &parsedRule{Name: name, Priority: spec.Priority}

@@ -108,7 +108,7 @@ data:
 |---|---|
 | `rules` | Required, nonempty list of rules. |
 | `name` | Required, nonempty rule name; also used to break priority ties. Use distinct names for predictable ordering. |
-| `priority` | Optional signed 32-bit integer; defaults to `0`. Lower values take precedence. |
+| `priority` | Optional integer in `[0, 100]`; defaults to `0`. Lower values take precedence. Default rules ship at `100`, so user rules always match first. |
 | `strategies` | Required, nonempty ordered list. Earlier strategies take precedence within a rule. |
 | `match` | Required. Use exactly one of `exact: true`, `allOf: [keys]`, `anyOf: [keys]`, or an empty map `{}` for time-only matching. |
 | `within` | Required positive duration, at most `168h` (seven days). Use `h`, `m`, or `s`, including combinations such as `1h30m`; maximum string length is 32 characters. |
@@ -150,7 +150,7 @@ custom one.
      rules.yaml: |
        rules:
          - name: my-node-rules
-           priority: -10
+           priority: 10
            strategies:
              - match:
                  allOf: [node]
