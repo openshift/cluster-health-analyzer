@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-health-analyzer-default-rules
+  namespace: openshift-cluster-health-analyzer
+data:
+  rules.yaml: |
+    rules:
+      - name: default
+        priority: 100
+        strategies:
+          - match:
+              exact: true
+            within: 24h
+            from: end
+          - match:
+              allOf: [namespace, alertname, service, job, container]
+            within: 24h
+            from: start
+          - excludeAlerts:
+              - alertname: Watchdog
+                namespace: openshift-monitoring
+              - alertname: AlertmanagerReceiversNotConfigured
+                namespace: openshift-monitoring
+            match:
+              anyOf: [alertname, namespace]
+            within: 24h
+            from: start
+          - match: {}
+            within: 15m
+            from: start
+          - match:
+              exact: true
+            within: 120h
+            from: end

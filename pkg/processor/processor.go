@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
@@ -41,15 +42,24 @@ type processor struct {
 	loader           prom.Loader
 	amLoader         alertmanager.Loader
 	groupsCollection *GroupsCollection
+	rulesSource      func() *RulesSnapshot
+
+	// assignedAlerts holds the latest processed firing alerts with their
+	// group_id, so a rules change can preserve known assignments.
+	assignedAlerts []model.LabelSet
 }
 
 type ProcessorConfig struct {
 	Interval        time.Duration
 	PromURL         string
 	AlertManagerURL string
+	RulesSource     func() *RulesSnapshot
 }
 
 func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.MetricSet, groupSeverityCountMetrics prom.MetricSet) (*processor, error) {
+	if cfg.RulesSource == nil {
+		return nil, fmt.Errorf("IncidentRules source is required")
+	}
 	promLoader, err := prom.NewLoader(cfg.PromURL)
 	if err != nil {
 		return nil, err
@@ -69,6 +79,7 @@ func NewProcessor(cfg ProcessorConfig, healthMapMetrics, componentsMetrics prom.
 		interval:                  cfg.Interval,
 		loader:                    promLoader,
 		amLoader:                  amLoader,
+		rulesSource:               cfg.RulesSource,
 	}, nil
 }
 
@@ -83,7 +94,13 @@ func (p *processor) Start(ctx context.Context) {
 // for assigning group-ids to the alerts.
 func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Time, step time.Duration) error {
 	slog.Info("Initializing groups collection", "start", start, "end", end, "step", step)
-	p.groupsCollection = &GroupsCollection{}
+	if p.rulesSource == nil {
+		return fmt.Errorf("IncidentRules source is required")
+	}
+	groups, err := NewGroupsCollection(p.rulesSource())
+	if err != nil {
+		return err
+	}
 
 	slog.Info("Loading alerts range")
 	alertsRange, err := p.loader.LoadAlertsRange(ctx, start, end, step)
@@ -92,10 +109,6 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	}
 	slog.Info("Loaded alerts range", "len", len(alertsRange))
 
-	// Warm up the groups collection with historical alerts.
-	slog.Info("Processing historical alerts")
-	p.groupsCollection.processHistoricalAlerts(alertsRange)
-
 	slog.Info("Loading health map range")
 	healthMapRV, err := p.loader.LoadVectorRange(ctx, ClusterHealthComponentsMap, start, end, step)
 	if err != nil {
@@ -103,8 +116,19 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	}
 	slog.Info("Loaded health map range", "len", len(healthMapRV))
 
+	// Recover known assignments from history before replaying, so the replay
+	// preserves them instead of reclassifying the alerts under current rules.
+	slog.Info("Recovering historical assignments")
+	groups.assignments = correlateHistoricalAssignments(alertsRange, healthMapRV)
+	slog.Info("Recovered historical assignments", "count", len(groups.assignments))
+
+	// Warm up the groups collection with historical alerts.
+	slog.Info("Processing historical alerts")
+	groups.processHistoricalAlerts(alertsRange)
+
 	slog.Info("Updating group-ids")
-	p.groupsCollection.UpdateGroupUUIDs(healthMapRV)
+	groups.UpdateGroupUUIDs(healthMapRV)
+	p.groupsCollection = groups
 
 	return nil
 }
@@ -169,6 +193,61 @@ func (p *processor) assignAlertsToGroups(alerts []model.LabelSet, t time.Time) [
 	return processedAlerts
 }
 
+// recordAssignments stores the current alert-to-incident assignments so a
+// rules change can preserve them.
+func (p *processor) recordAssignments(alerts []model.LabelSet) {
+	recorded := make([]model.LabelSet, 0, len(alerts))
+	for _, alert := range alerts {
+		if alert["group_id"] == "" {
+			continue
+		}
+		recorded = append(recorded, maps.Clone(alert))
+	}
+	p.assignedAlerts = recorded
+}
+
+// adoptRules switches to new rules without reclassifying known incidents:
+// candidate matchers are regenerated from the currently assigned firing
+// alerts under the new rules, and alerts that already have a group keep
+// their incident. New, unassigned alerts are evaluated against the new
+// rules only.
+// shortcut: assignments of alerts that resolved before the rules change are
+// not recovered on reload; a re-firing resolved alert can get a new incident
+// until restart-time identity recovery is improved.
+func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
+	slog.Info("IncidentRules changed, adopting new rules without reclassifying incidents")
+	groups, err := NewGroupsCollection(rules)
+	if err != nil {
+		return err
+	}
+	mt := model.TimeFromUnixNano(t.UnixNano())
+	byID := make(map[string][]model.LabelSet)
+	for _, alert := range p.assignedAlerts {
+		id := string(alert["group_id"])
+		labels := maps.Clone(alert)
+		delete(labels, "group_id")
+		byID[id] = append(byID[id], labels)
+	}
+	for id, alerts := range byID {
+		for i, labels := range alerts {
+			interval := Interval{Metric: labels, Start: mt, End: mt}
+			for _, m := range rules.alertGroupMatchers(interval) {
+				m.GroupID, m.RootGroupID = id, id
+				groups.AddGroup(m)
+			}
+			if i == 0 {
+				// One temporal matcher per incident keeps time-based joining
+				// available under the new rules.
+				for _, m := range rules.rootGroupMatchers(interval, id) {
+					groups.AddGroup(m)
+				}
+			}
+		}
+	}
+	p.groupsCollection = groups
+	return nil
+}
+
 // Process performs a single iteration of the processor.
 func (p *processor) Process(ctx context.Context) error {
 	err := p.updateHealthMap(ctx)
@@ -207,6 +286,17 @@ func (p *processor) updateHealthMap(ctx context.Context) error {
 }
 
 func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelSet, error) {
+	if p.rulesSource != nil {
+		rules := p.rulesSource()
+		if rules == nil || len(rules.rules) == 0 {
+			return nil, fmt.Errorf("no valid IncidentRules loaded")
+		}
+		if p.groupsCollection != nil && p.groupsCollection.rules != rules {
+			if err := p.adoptRules(rules, t); err != nil {
+				return nil, fmt.Errorf("failed to adopt IncidentRules: %w", err)
+			}
+		}
+	}
 	alerts, err := p.loader.LoadQuery(ctx, `ALERTS{alertstate="firing"}`, t)
 	if err != nil {
 		return nil, err
@@ -214,6 +304,7 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 
 	if p.groupsCollection != nil {
 		alerts = p.assignAlertsToGroups(alerts, t)
+		p.recordAssignments(alerts)
 	}
 
 	alerts, err = p.evaluateSilences(alerts)
