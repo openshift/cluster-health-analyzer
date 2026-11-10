@@ -33,7 +33,7 @@ func TestStartServerFailsBeforeServingWithoutRules(t *testing.T) {
 		if r.URL.Query().Get("watch") == "true" {
 			w.WriteHeader(http.StatusOK)
 			if r.URL.Query().Get("sendInitialEvents") == "true" {
-				_, err := fmt.Fprintln(w, `{"type":"BOOKMARK","object":{"apiVersion":"v1","kind":"ConfigMap","metadata":{"resourceVersion":"1","name":"cluster-health-analyzer-config","annotations":{"k8s.io/initial-events-end":"true"}}}}`)
+				_, err := fmt.Fprintln(w, `{"type":"BOOKMARK","object":{"apiVersion":"v1","kind":"ConfigMap","metadata":{"resourceVersion":"1","name":"cluster-health-analyzer-default-rules","annotations":{"k8s.io/initial-events-end":"true"}}}}`)
 				if err != nil {
 					t.Error(err)
 				}
@@ -58,7 +58,7 @@ func TestStartServerFailsBeforeServingWithoutRules(t *testing.T) {
 	require.NoError(t, clientcmd.WriteToFile(config, path))
 	server := &startupTestServer{}
 	err := StartServer(time.Minute, server, common.Options{Kubeconfig: path, DisableComponentsHealth: true})
-	require.ErrorContains(t, err, "no valid IncidentRules")
+	require.ErrorContains(t, err, "no valid default IncidentRules")
 	require.False(t, server.started)
 	require.False(t, server.handled)
 }

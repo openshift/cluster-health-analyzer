@@ -17,6 +17,7 @@ configured separately.
   - [Introduced behavioural changes](#introduced-behavioural-changes)
   - [Known limitations](#known-limitations)
 - [Configuration format and deployment](#configuration-format-and-deployment)
+  - [Default and custom rules ConfigMaps (proposed)](#default-and-custom-rules-configmaps)
 - [Processing responsibilities](#processing-responsibilities)
 - [Namespace selection](#namespace-selection)
 - [Validation and configuration lifecycle](#validation-and-configuration-lifecycle)
@@ -69,9 +70,10 @@ exact fallback window of five days, now expressed as `within: 120h`.
 
 ### Source and schema
 
-CHA reads one ConfigMap named `cluster-health-analyzer-config`, using its
-`rules.yaml` data key. No custom resource definition (CRD) or additional
-configuration service is required.
+CHA reads rules from the
+[default and custom rules ConfigMaps](#default-and-custom-rules-configmaps),
+each using its `rules.yaml` data key. No custom resource definition (CRD) or
+additional configuration service is required.
 
 A **rule** is a named, prioritized list of **strategies**. Each strategy specifies
 which labels to compare and how far apart observations may be. Strategies are
@@ -88,7 +90,7 @@ each observation because there is no fallback strategy.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cluster-health-analyzer-config
+  name: cluster-health-analyzer-custom-rules
   namespace: openshift-cluster-health-analyzer
 data:
   rules.yaml: |
@@ -121,6 +123,94 @@ The parser and file loader are in [rules.go](../pkg/processor/rules.go).
 `LoadRulesFile`, used by simulation and tests, accepts either a complete ConfigMap
 manifest or the bare `rules.yaml` payload. It is not a server fallback when the
 ConfigMap is absent.
+
+### Default and custom rules ConfigMaps
+
+CHA watches two ConfigMaps, separating shipped defaults from user-defined
+rules: COO keeps reconciling the defaults ConfigMap and never touches the
+custom one.
+
+#### Target behavior
+
+1. COO deploys and reconciles a ConfigMap named
+   `cluster-health-analyzer-default-rules` (the current ConfigMap renamed,
+   carrying the shipped default rules). User edits to it are overwritten by
+   COO on the next reconciliation.
+2. Users put their custom rules in a ConfigMap named by convention
+   `cluster-health-analyzer-custom-rules`, in CHA's own namespace, with a
+   `rules.yaml` data key using the same schema as the defaults ConfigMap:
+
+   ```yaml
+   apiVersion: v1
+   kind: ConfigMap
+   metadata:
+     name: cluster-health-analyzer-custom-rules
+     namespace: openshift-cluster-health-analyzer
+   data:
+     rules.yaml: |
+       rules:
+         - name: my-node-rules
+           priority: -10
+           strategies:
+             - match:
+                 allOf: [node]
+               within: 24h
+               from: start
+   ```
+
+   The custom ConfigMap is created and owned by the user; COO does not
+   reconcile it. It may be absent, in which case only the defaults apply.
+
+3. CHA watches both ConfigMaps **in its own namespace** and merges their rules
+   into one snapshot. The watcher uses one informer per ConfigMap name, each
+   with its own `metadata.name` field selector, because Kubernetes field
+   selectors cannot combine two names in one request. The namespace is selected
+   with the existing
+   [resolution chain](#namespace-selection): the `INCIDENT_RULES_NAMESPACE`
+   environment variable, then the pod namespace, then `default`. The chain is
+   unchanged — the variable remains as the single development-time override.
+
+#### Merge semantics
+
+- The rule lists of both ConfigMaps are concatenated and evaluated as a single
+  rule set; ordering uses the existing `priority` and `name` tie-breakers.
+- A custom rule with the same `name` as a default rule **replaces** that
+  default rule, so users can override shipped rules, not only add to them.
+- Each ConfigMap's payload is validated independently. A ConfigMap with an
+  invalid `rules.yaml` or a missing `rules.yaml` key is logged and ignored;
+  it does not invalidate the rest of the snapshot. The defaults ConfigMap must
+  still be valid for CHA to start.
+- Creating, updating, or deleting the custom ConfigMap rebuilds and publishes
+  a new snapshot, exactly like updates to the defaults ConfigMap today.
+  Deleting the custom ConfigMap returns the effective rules to the defaults.
+
+#### RBAC
+
+Two separate RBAC concerns are involved; neither grants per-object permissions,
+because Kubernetes RBAC cannot restrict access by object label or ownership.
+
+**CHA reading the rules (watcher side).** The operator ships a Role granting
+the CHA ServiceAccount `get`, `list`, and `watch` on `configmaps` in CHA's
+namespace, restricted by `resourceNames` to exactly the two ConfigMaps above:
+`cluster-health-analyzer-default-rules` and
+`cluster-health-analyzer-custom-rules`. No other ConfigMap in the namespace is
+readable by CHA, matching the
+[RBAC manifest](../manifests/backend/10_incident_rule_rbac.yaml). The
+RoleBinding associates this Role with the CHA ServiceAccount.
+
+**Who may write the custom ConfigMap** is outside the scope of this design:
+CHA only reads it. Access for human users to create and update
+`cluster-health-analyzer-custom-rules` is managed by the cluster administrator
+through ordinary namespace RBAC.
+
+#### Out of scope
+
+- No CRD, operator, or separate configuration service: rules remain plain
+  ConfigMaps.
+- No per-rule user attribution; write access to the custom ConfigMap is the
+  effective trust boundary, shared by everyone granted it.
+- No support for additional custom ConfigMaps: only the fixed
+  `cluster-health-analyzer-custom-rules` name is watched.
 
 ### Understanding `from: start` and `from: end`
 
@@ -355,7 +445,7 @@ When incident processing is enabled:
 
 1. Select the namespace and start the ConfigMap watcher.
 2. Wait up to 30 seconds for the watcher's initial cache synchronization.
-3. Require a valid rules snapshot. Missing configuration, a missing `rules.yaml`
+3. Require a valid rules snapshot. Missing configuration, a missing `rules`
    key, invalid rules, or synchronization failure causes startup to fail.
 4. Load history and reconstruct grouping state. A loading or initialization error
    also causes startup to fail; partially reconstructed state is not published.

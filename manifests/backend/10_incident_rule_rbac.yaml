@@ -1,17 +1,17 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cluster-health-analyzer-config
+  name: cluster-health-analyzer-rules
 rules:
   - apiGroups: [""]
     resources: [configmaps]
-    resourceNames: [cluster-health-analyzer-config]
+    resourceNames: [cluster-health-analyzer-default-rules, cluster-health-analyzer-custom-rules]
     verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: cluster-health-analyzer-config
+  name: cluster-health-analyzer-rules
 subjects:
   - kind: ServiceAccount
     name: cluster-health-analyzer-thanos-querier
@@ -19,4 +19,4 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-health-analyzer-config
+  name: cluster-health-analyzer-rules

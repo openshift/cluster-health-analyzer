@@ -20,16 +20,27 @@ import (
 )
 
 const (
-	// ConfigMapName is the analyzer configuration ConfigMap holding the rules.
-	ConfigMapName = "cluster-health-analyzer-config"
+	// DefaultRulesConfigMapName is the ConfigMap holding the shipped default
+	// rules. It is owned and reconciled by the deploying operator.
+	DefaultRulesConfigMapName = "cluster-health-analyzer-default-rules"
+	// CustomRulesConfigMapName is the user-owned ConfigMap holding additional
+	// or overriding rules. It may be absent.
+	CustomRulesConfigMapName = "cluster-health-analyzer-custom-rules"
 	// RulesConfigKey is the ConfigMap data key holding the rules section.
 	RulesConfigKey = "rules.yaml"
 )
 
 type RulesWatcher struct {
-	mu       sync.RWMutex
-	snapshot *RulesSnapshot
-	informer cache.SharedIndexInformer
+	mu        sync.RWMutex
+	snapshot  *RulesSnapshot
+	informers map[string]cache.SharedIndexInformer
+}
+
+// watchedConfigMaps lists the ConfigMaps whose rules are merged into one
+// snapshot, in merge order: a custom rule replaces a default rule with the
+// same name.
+func watchedConfigMaps() []string {
+	return []string{DefaultRulesConfigMapName, CustomRulesConfigMapName}
 }
 
 func NewRulesWatcher(config *rest.Config) (*RulesWatcher, error) {
@@ -41,25 +52,31 @@ func NewRulesWatcher(config *rest.Config) (*RulesWatcher, error) {
 }
 
 func newRulesWatcher(client kubernetes.Interface) (*RulesWatcher, error) {
-	factory := informers.NewSharedInformerFactoryWithOptions(client, 0,
-		informers.WithNamespace(watchNamespace()),
-		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
-			opts.FieldSelector = "metadata.name=" + ConfigMapName
-		}),
-	)
-	watcher := &RulesWatcher{informer: factory.Core().V1().ConfigMaps().Informer()}
-	_, err := watcher.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(_ interface{}) { watcher.rebuild() },
-		UpdateFunc: func(_, _ interface{}) { watcher.rebuild() },
-		DeleteFunc: func(_ interface{}) { watcher.rebuild() },
-	})
-	if err != nil {
-		return nil, err
+	watcher := &RulesWatcher{informers: map[string]cache.SharedIndexInformer{}}
+	for _, name := range watchedConfigMaps() {
+		// Kubernetes field selectors cannot combine two names in one
+		// request, so each ConfigMap gets its own informer.
+		factory := informers.NewSharedInformerFactoryWithOptions(client, 0,
+			informers.WithNamespace(watchNamespace()),
+			informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+				opts.FieldSelector = "metadata.name=" + name
+			}),
+		)
+		informer := factory.Core().V1().ConfigMaps().Informer()
+		_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(_ interface{}) { watcher.rebuild() },
+			UpdateFunc: func(_, _ interface{}) { watcher.rebuild() },
+			DeleteFunc: func(_ interface{}) { watcher.rebuild() },
+		})
+		if err != nil {
+			return nil, err
+		}
+		watcher.informers[name] = informer
 	}
 	return watcher, nil
 }
 
-// watchNamespace returns the namespace holding the rules ConfigMap.
+// watchNamespace returns the namespace holding the rules ConfigMaps.
 // An explicit environment override wins, so local runs and operators can
 // point at a namespace other than the pod's own.
 func watchNamespace() string {
@@ -76,13 +93,22 @@ func watchNamespace() string {
 
 // Start waits for the initial list before allowing incident processing to begin.
 func (rw *RulesWatcher) Start(ctx context.Context) error {
-	go rw.informer.Run(ctx.Done())
+	synced := make([]cache.InformerSynced, 0, len(rw.informers))
+	for _, informer := range rw.informers {
+		go informer.Run(ctx.Done())
+		synced = append(synced, informer.HasSynced)
+	}
 	syncContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if !cache.WaitForCacheSync(syncContext.Done(), rw.informer.HasSynced) {
+	if !cache.WaitForCacheSync(syncContext.Done(), synced...) {
 		return fmt.Errorf("failed to synchronize incident rules config")
 	}
 	rw.rebuild()
+	// The defaults ConfigMap must be valid for CHA to start; the custom one
+	// is optional.
+	if rw.loadRules(DefaultRulesConfigMapName) == nil {
+		return fmt.Errorf("no valid default IncidentRules in %s", DefaultRulesConfigMapName)
+	}
 	if snapshot := rw.GetSnapshot(); snapshot == nil || len(snapshot.rules) == 0 {
 		return fmt.Errorf("no valid IncidentRules loaded")
 	}
@@ -100,33 +126,19 @@ func (rw *RulesWatcher) rebuild() {
 	defer rw.mu.Unlock()
 
 	var rules []*parsedRule
-	for _, item := range rw.informer.GetStore().List() {
-		cm, ok := item.(*corev1.ConfigMap)
-		if !ok {
-			slog.Error("Cannot load incident rules: unexpected object type")
-			continue
-		}
-		data, found := cm.Data[RulesConfigKey]
-		if !found {
-			slog.Error("Cannot load incident rules: missing key in config", "configmap", ConfigMapName, "key", RulesConfigKey)
-			continue
-		}
-		parsed, err := parseRulesConfig([]byte(data))
-		if err != nil {
-			slog.Error("Cannot load invalid incident rules", "configmap", ConfigMapName, "error", err)
-			continue
-		}
-		rules = parsed
+	for _, name := range watchedConfigMaps() {
+		rules = append(rules, rw.loadRules(name)...)
 	}
 	if rules == nil {
-		// The ConfigMap is missing, deleted or invalid. Keep the last valid
-		// snapshot so incident processing continues; startup without any
-		// valid snapshot still fails in Start.
+		// No ConfigMap yielded valid rules. Keep the last valid snapshot so
+		// incident processing continues; startup without any valid snapshot
+		// still fails in Start.
 		if rw.snapshot != nil {
-			slog.Warn("Keeping last valid IncidentRules: no valid configuration available", "configmap", ConfigMapName)
+			slog.Warn("Keeping last valid IncidentRules: no valid configuration available")
 		}
 		return
 	}
+	rules = mergeRules(rules)
 	sortRules(rules)
 	snapshot := &RulesSnapshot{rules: rules}
 	// Metadata-only updates must not invalidate stateful matchers.
@@ -134,6 +146,53 @@ func (rw *RulesWatcher) rebuild() {
 		rw.snapshot = snapshot
 		slog.Info("Loaded IncidentRules", "count", len(rules))
 	}
+}
+
+// loadRules reads one ConfigMap from the watcher's store and parses its
+// rules. A missing, incomplete or invalid ConfigMap is logged and yields no
+// rules; it does not invalidate rules loaded from the other ConfigMap.
+func (rw *RulesWatcher) loadRules(name string) []*parsedRule {
+	item, exists, err := rw.informers[name].GetStore().GetByKey(watchNamespace() + "/" + name)
+	if err != nil {
+		slog.Error("Cannot load incident rules", "configmap", name, "error", err)
+		return nil
+	}
+	if !exists {
+		// The custom ConfigMap is user-owned and may legitimately be absent.
+		return nil
+	}
+	cm, ok := item.(*corev1.ConfigMap)
+	if !ok {
+		slog.Error("Cannot load incident rules: unexpected object type", "configmap", name)
+		return nil
+	}
+	data, found := cm.Data[RulesConfigKey]
+	if !found {
+		slog.Error("Cannot load incident rules: missing key in config", "configmap", name, "key", RulesConfigKey)
+		return nil
+	}
+	parsed, err := parseRulesConfig([]byte(data))
+	if err != nil {
+		slog.Error("Cannot load invalid incident rules", "configmap", name, "error", err)
+		return nil
+	}
+	return parsed
+}
+
+// mergeRules keeps the last rule for each name, so a custom rule replaces a
+// default rule with the same name.
+func mergeRules(rules []*parsedRule) []*parsedRule {
+	indexByName := make(map[string]int, len(rules))
+	merged := make([]*parsedRule, 0, len(rules))
+	for _, rule := range rules {
+		if i, ok := indexByName[rule.Name]; ok {
+			merged[i] = rule
+			continue
+		}
+		indexByName[rule.Name] = len(merged)
+		merged = append(merged, rule)
+	}
+	return merged
 }
 
 func sortRules(rules []*parsedRule) {

@@ -20,14 +20,18 @@ func testRulesYAML(name, strategiesYAML string) string {
 
 const testNodeStrategy = "  - match:\n      allOf: [node]\n    within: 24h\n    from: start\n"
 
-func testConfigMap(t *testing.T, rulesYAML string) *corev1.ConfigMap {
+func testConfigMap(t *testing.T, name, rulesYAML string) *corev1.ConfigMap {
 	t.Helper()
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: watchNamespace()},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: watchNamespace()},
 		Data:       map[string]string{RulesConfigKey: rulesYAML},
 	}
 }
 
+func testDefaultRulesConfigMap(t *testing.T, rulesYAML string) *corev1.ConfigMap {
+	t.Helper()
+	return testConfigMap(t, DefaultRulesConfigMapName, rulesYAML)
+}
 func testRulesWatcher(t *testing.T, objects ...runtime.Object) (*RulesWatcher, *fake.Clientset) {
 	t.Helper()
 	client := fake.NewSimpleClientset(objects...)
@@ -45,7 +49,7 @@ func TestRulesWatcherStartRequiresValidRules(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var objects []runtime.Object
 			if rulesYAML != "" {
-				objects = append(objects, testConfigMap(t, rulesYAML))
+				objects = append(objects, testDefaultRulesConfigMap(t, rulesYAML))
 			}
 			watcher, _ := testRulesWatcher(t, objects...)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -55,7 +59,7 @@ func TestRulesWatcherStartRequiresValidRules(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, watcher.GetSnapshot().rules, 1)
 			} else {
-				require.ErrorContains(t, err, "no valid IncidentRules")
+				require.ErrorContains(t, err, "no valid default IncidentRules")
 			}
 		})
 	}
@@ -63,8 +67,8 @@ func TestRulesWatcherStartRequiresValidRules(t *testing.T) {
 
 func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 	watcher, _ := testRulesWatcher(t)
-	store := watcher.informer.GetStore()
-	obj := testConfigMap(t, testRulesYAML("custom", testNodeStrategy))
+	store := watcher.informers[DefaultRulesConfigMapName].GetStore()
+	obj := testDefaultRulesConfigMap(t, testRulesYAML("custom", testNodeStrategy))
 	require.NoError(t, store.Add(obj))
 	watcher.rebuild()
 	original := watcher.GetSnapshot()
@@ -76,7 +80,7 @@ func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 	watcher.rebuild()
 	require.Same(t, original, watcher.GetSnapshot())
 
-	changed := testConfigMap(t, testRulesYAML("custom", "  - match:\n      allOf: [namespace]\n    within: 24h\n    from: start\n"))
+	changed := testDefaultRulesConfigMap(t, testRulesYAML("custom", "  - match:\n      allOf: [namespace]\n    within: 24h\n    from: start\n"))
 	require.NoError(t, store.Update(changed))
 	watcher.rebuild()
 	updated := watcher.GetSnapshot()
@@ -89,7 +93,7 @@ func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 	previousLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
 	defer slog.SetDefault(previousLogger)
-	invalid := testConfigMap(t, testRulesYAML("custom", "  - match:\n      anyOf: []\n    within: 24h\n    from: start\n"))
+	invalid := testDefaultRulesConfigMap(t, testRulesYAML("custom", "  - match:\n      anyOf: []\n    within: 24h\n    from: start\n"))
 	require.NoError(t, store.Update(invalid))
 	watcher.rebuild()
 	// Invalid updates are logged and ignored: the last valid snapshot stays.
@@ -98,25 +102,25 @@ func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 }
 
 func TestRulesWatcherObservesUpdatesAndDeletion(t *testing.T) {
-	obj := testConfigMap(t, testRulesYAML("custom", testNodeStrategy))
+	obj := testDefaultRulesConfigMap(t, testRulesYAML("custom", testNodeStrategy))
 	watcher, client := testRulesWatcher(t, obj)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, watcher.Start(ctx))
 	original := watcher.GetSnapshot()
-	changed := testConfigMap(t, testRulesYAML("custom", "  - match:\n      anyOf: [node]\n    within: 24h\n    from: start\n"))
+	changed := testDefaultRulesConfigMap(t, testRulesYAML("custom", "  - match:\n      anyOf: [node]\n    within: 24h\n    from: start\n"))
 	_, err := client.CoreV1().ConfigMaps(watchNamespace()).Update(ctx, changed, metav1.UpdateOptions{})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		return watcher.GetSnapshot() != original && watcher.GetSnapshot().rules[0].Strategies[0].operator == "anyOf"
 	}, time.Second, 10*time.Millisecond)
-	require.NoError(t, client.CoreV1().ConfigMaps(watchNamespace()).Delete(ctx, ConfigMapName, metav1.DeleteOptions{}))
+	require.NoError(t, client.CoreV1().ConfigMaps(watchNamespace()).Delete(ctx, DefaultRulesConfigMapName, metav1.DeleteOptions{}))
 	// Deleting the ConfigMap keeps the last valid rules; it is not an
 	// implicit disable command.
 	require.Never(t, func() bool { return len(watcher.GetSnapshot().rules) == 0 }, 500*time.Millisecond, 100*time.Millisecond)
 	require.Equal(t, "anyOf", watcher.GetSnapshot().rules[0].Strategies[0].operator)
 	// Recreating the ConfigMap allows valid updates to be adopted again.
-	recreated := testConfigMap(t, testRulesYAML("custom", testNodeStrategy))
+	recreated := testDefaultRulesConfigMap(t, testRulesYAML("custom", testNodeStrategy))
 	_, err = client.CoreV1().ConfigMaps(watchNamespace()).Create(ctx, recreated, metav1.CreateOptions{})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
@@ -137,12 +141,12 @@ func TestRulesNamespacePrecedence(t *testing.T) {
 
 func TestRulesWatcherUpdatesWindowAndPriority(t *testing.T) {
 	watcher, _ := testRulesWatcher(t)
-	store := watcher.informer.GetStore()
-	require.NoError(t, store.Add(testConfigMap(t, "rules:\n- name: z-rule\n  strategies:\n  - match:\n      allOf: [node]\n    within: 1h\n    from: start\n")))
+	store := watcher.informers[DefaultRulesConfigMapName].GetStore()
+	require.NoError(t, store.Add(testDefaultRulesConfigMap(t, "rules:\n- name: z-rule\n  strategies:\n  - match:\n      allOf: [node]\n    within: 1h\n    from: start\n")))
 	watcher.rebuild()
 	snapshot := watcher.GetSnapshot()
 	require.Equal(t, "z-rule", snapshot.rules[0].Name)
-	changed := testConfigMap(t, "rules:\n- name: z-rule\n  priority: 20\n  strategies:\n  - match:\n      allOf: [node]\n    within: 48h\n    from: end\n- name: a-rule\n  priority: 10\n  strategies:\n  - match: {}\n    within: 15m\n    from: start\n")
+	changed := testDefaultRulesConfigMap(t, "rules:\n- name: z-rule\n  priority: 20\n  strategies:\n  - match:\n      allOf: [node]\n    within: 48h\n    from: end\n- name: a-rule\n  priority: 10\n  strategies:\n  - match: {}\n    within: 15m\n    from: start\n")
 	require.NoError(t, store.Update(changed))
 	watcher.rebuild()
 	updated := watcher.GetSnapshot()
@@ -154,4 +158,50 @@ func TestRulesWatcherUpdatesWindowAndPriority(t *testing.T) {
 	require.EqualValues(t, 20, strategy.Priority)
 	require.Equal(t, time.Hour, snapshot.rules[0].Strategies[0].Within)
 	require.Equal(t, "start", snapshot.rules[0].Strategies[0].From)
+}
+
+func TestRulesWatcherMergesCustomRules(t *testing.T) {
+	defaults := testDefaultRulesConfigMap(t, "rules:\n- name: default\n  strategies:\n"+testNodeStrategy+"- name: shared\n  priority: 10\n  strategies:\n  - match:\n      allOf: [namespace]\n    within: 1h\n    from: start\n")
+	custom := testConfigMap(t, CustomRulesConfigMapName, "rules:\n- name: shared\n  priority: -10\n  strategies:\n  - match:\n      anyOf: [node]\n    within: 2h\n    from: end\n")
+	watcher, client := testRulesWatcher(t, defaults, custom)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, watcher.Start(ctx))
+	snapshot := watcher.GetSnapshot()
+	// The custom rule with the same name replaces the default one.
+	require.Len(t, snapshot.rules, 2)
+	require.Equal(t, "shared", snapshot.rules[0].Name)
+	require.EqualValues(t, -10, snapshot.rules[0].Strategies[0].Priority)
+	require.Equal(t, "anyOf", snapshot.rules[0].Strategies[0].operator)
+	require.Equal(t, "default", snapshot.rules[1].Name)
+
+	// Deleting the custom ConfigMap returns to the default rules only.
+	require.NoError(t, client.CoreV1().ConfigMaps(watchNamespace()).Delete(ctx, CustomRulesConfigMapName, metav1.DeleteOptions{}))
+	require.Eventually(t, func() bool {
+		s := watcher.GetSnapshot()
+		return len(s.rules) == 2 && s.rules[1].Name == "shared" && s.rules[1].Strategies[0].operator == "allOf" && s.rules[1].Strategies[0].Keys[0] == "namespace"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestRulesWatcherIgnoresInvalidCustomRules(t *testing.T) {
+	defaults := testDefaultRulesConfigMap(t, testRulesYAML("default", testNodeStrategy))
+	invalidCustom := testConfigMap(t, CustomRulesConfigMapName, "rules:\n- name: bad\n  strategies:\n  - match:\n      anyOf: []\n    within: 24h\n    from: start\n")
+	watcher, _ := testRulesWatcher(t, defaults, invalidCustom)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, watcher.Start(ctx))
+	// An invalid custom ConfigMap does not invalidate the defaults.
+	snapshot := watcher.GetSnapshot()
+	require.Len(t, snapshot.rules, 1)
+	require.Equal(t, "default", snapshot.rules[0].Name)
+}
+
+func TestRulesWatcherStartRequiresDefaultRules(t *testing.T) {
+	// A valid custom ConfigMap alone does not satisfy startup.
+	custom := testConfigMap(t, CustomRulesConfigMapName, testRulesYAML("custom", testNodeStrategy))
+	watcher, _ := testRulesWatcher(t, custom)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := watcher.Start(ctx)
+	require.ErrorContains(t, err, "no valid default IncidentRules")
 }
