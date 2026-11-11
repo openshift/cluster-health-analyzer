@@ -17,6 +17,7 @@ import (
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
@@ -450,6 +451,94 @@ func TestGetIncidentsReturnsAlertQueryError(t *testing.T) {
 	assert.ErrorIs(t, err, alertsErr)
 	assert.Nil(t, result)
 	assert.Nil(t, structured)
+}
+
+func TestFitIncidents(t *testing.T) {
+	newIncidents := func() []Incident {
+		return []Incident{
+			{GroupId: "a", Severity: "warning", StartTime: "2026-01-01T10:00:00Z"},
+			{GroupId: "b", Severity: "critical", StartTime: "2026-01-01T09:00:00Z"},
+			{GroupId: "c", Severity: "warning", StartTime: "2026-01-01T11:00:00Z"},
+			{GroupId: "d", Severity: "warning", StartTime: "2026-01-01T11:00:00Z"},
+		}
+	}
+	ids := func(incidents []Incident) []string {
+		var out []string
+		for _, inc := range incidents {
+			out = append(out, inc.GroupId)
+		}
+		return out
+	}
+	envelope, err := json.Marshal(Response{Incidents: Incidents{Total: 4, Truncated: true}})
+	require.NoError(t, err)
+	first, err := json.Marshal(newIncidents()[1])
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		maxBytes  int64
+		wantIDs   []string
+		truncated bool
+	}{
+		{"all fit", 1 << 20, []string{"b", "c", "d", "a"}, false},
+		{"first fits", 2 * int64(len(envelope)+len(first)+1), []string{"b"}, true},
+		{"none fit", 2 * int64(len(envelope)), nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := fitIncidents(newIncidents(), tt.maxBytes)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantIDs, ids(got.Incidents))
+			assert.Equal(t, len(newIncidents()), got.Total)
+			assert.Equal(t, tt.truncated, got.Truncated)
+
+			data, err := json.Marshal(Response{Incidents: got})
+			require.NoError(t, err)
+			assert.LessOrEqual(t, 2*int64(len(data)), tt.maxBytes)
+		})
+	}
+
+	t.Run("budget too small", func(t *testing.T) {
+		_, err := fitIncidents(newIncidents(), 2*int64(len(envelope))-1)
+		require.Error(t, err)
+	})
+}
+
+func TestGetIncidentsWithBudgetTruncates(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	promLoader := mocks.NewMockPrometheusLoader(ctrl)
+	amLoader := mocks.NewMockAlertManagerLoader(ctrl)
+	promLoader.EXPECT().
+		LoadVectorRange(gomock.Any(), processor.ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(prom.RangeVector{{
+			Metric: model.LabelSet{
+				"group_id": "1", "src_alertname": "Alert1", "src_severity": "warning", "component": "monitoring",
+			},
+			Samples: []model.SamplePair{{Value: 1, Timestamp: model.Now().Add(-1 * time.Minute)}},
+		}}, nil)
+	amLoader.EXPECT().SilencedAlerts().Return(nil, nil)
+	promLoader.EXPECT().
+		LoadQuery(gomock.Any(), "console_url", gomock.Any()).
+		Return([]model.LabelSet{{"url": "test.url"}}, nil)
+	promLoader.EXPECT().
+		LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, nil)
+
+	tool := NewIncidentsTool("", "")
+	envelope, err := json.Marshal(Response{Incidents: Incidents{Total: 1, Truncated: true}})
+	require.NoError(t, err)
+	result, structured, err := tool.GetIncidentsWithBudget(t.Context(), GetIncidentsParams{}, promLoader, amLoader, 2*int64(len(envelope)))
+	require.NoError(t, err)
+	response := structured.(Response)
+	assert.True(t, response.Incidents.Truncated)
+	assert.Equal(t, 1, response.Incidents.Total)
+
+	var decoded Response
+	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &decoded))
+	assert.True(t, decoded.Incidents.Truncated)
+	assert.Equal(t, 1, decoded.Incidents.Total)
 }
 
 func TestTransformPromValueToIncident(t *testing.T) {

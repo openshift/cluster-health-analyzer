@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -158,6 +159,15 @@ func (i *IncidentTool) IncidentsHandler(ctx context.Context, request *mcp.CallTo
 // GetIncidents retrieves incidents using the supplied clients, without
 // depending on how the caller obtained its credentials.
 func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsParams, promLoader prom.Loader, amLoader alertmanager.Loader) (*mcp.CallToolResult, any, error) {
+	return i.GetIncidentsWithBudget(ctx, params, promLoader, amLoader, 0)
+}
+
+// GetIncidentsWithBudget is GetIncidents with the result capped at maxBytes,
+// counting both the JSON text and the structured value. maxBytes <= 0 is
+// uncapped. When capped, incidents are ordered by severity, then newest start
+// time; incidents that do not fit are omitted, the response is marked truncated,
+// and total keeps the count before truncation.
+func (i *IncidentTool) GetIncidentsWithBudget(ctx context.Context, params GetIncidentsParams, promLoader prom.Loader, amLoader alertmanager.Loader, maxBytes int64) (*mcp.CallToolResult, any, error) {
 	timeRange := float64(defaultTimeRangeHours)
 	if params.TimeRange > 0 {
 		timeRange = params.TimeRange
@@ -207,6 +217,13 @@ func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsPara
 			Incidents: incidents,
 		},
 	}
+	if maxBytes > 0 {
+		r.Incidents, err = fitIncidents(incidents, maxBytes)
+		if err != nil {
+			slog.Error("Failed to fit the Incident data to the result budget", "error", err)
+			return nil, nil, err
+		}
+	}
 
 	data, err := json.Marshal(r)
 	if err != nil {
@@ -219,6 +236,41 @@ func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsPara
 			&mcp.TextContent{Text: string(data)},
 		},
 	}, r, nil
+}
+
+// fitIncidents orders incidents by severity, then newest start time, and keeps
+// the leading ones whose response, counted twice for the JSON text and the
+// structured value, fits in maxBytes. Total reports the count before
+// truncation, so the number of omitted incidents is total minus len(items).
+func fitIncidents(incidents []Incident, maxBytes int64) (Incidents, error) {
+	slices.SortFunc(incidents, func(a, b Incident) int {
+		return cmp.Or(
+			cmp.Compare(processor.ParseHealthValue(b.Severity), processor.ParseHealthValue(a.Severity)),
+			strings.Compare(b.StartTime, a.StartTime),
+			strings.Compare(a.GroupId, b.GroupId),
+		)
+	})
+	// The envelope reserves the largest total, "items":null and "truncated":true.
+	envelope, err := json.Marshal(Response{Incidents: Incidents{Total: len(incidents), Truncated: true}})
+	if err != nil {
+		return Incidents{}, err
+	}
+	size := int64(len(envelope))
+	if 2*size > maxBytes {
+		return Incidents{}, fmt.Errorf("result budget of %d bytes cannot hold the minimum response of %d bytes", maxBytes, 2*size)
+	}
+	for n, inc := range incidents {
+		data, err := json.Marshal(inc)
+		if err != nil {
+			return Incidents{}, err
+		}
+		size += int64(len(data)) + 1 // item plus separator
+		if 2*size > maxBytes {
+			// Clone so the omitted incidents are not retained.
+			return Incidents{Total: len(incidents), Incidents: slices.Clone(incidents[:n]), Truncated: true}, nil
+		}
+	}
+	return Incidents{Total: len(incidents), Incidents: incidents}, nil
 }
 
 // formatToRFC3339 formats a time to RFC3339 string, returns empty string for zero time
