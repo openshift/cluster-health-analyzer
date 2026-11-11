@@ -427,6 +427,31 @@ func TestGetIncidentsUsesFractionalHours(t *testing.T) {
 	}
 }
 
+func TestGetIncidentsReturnsAlertQueryError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	alertsErr := fmt.Errorf("alerts query failed")
+	promLoader := mocks.NewMockPrometheusLoader(ctrl)
+	amLoader := mocks.NewMockAlertManagerLoader(ctrl)
+	promLoader.EXPECT().
+		LoadVectorRange(gomock.Any(), processor.ClusterHealthComponentsMap, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, nil)
+	amLoader.EXPECT().SilencedAlerts().Return(nil, nil)
+	promLoader.EXPECT().
+		LoadQuery(gomock.Any(), "console_url", gomock.Any()).
+		Return([]model.LabelSet{{"url": "test.url"}}, nil)
+	promLoader.EXPECT().
+		LoadVectorRange(gomock.Any(), `ALERTS{alertstate!="pending"}`, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, alertsErr)
+
+	tool := NewIncidentsTool("", "")
+	result, structured, err := tool.GetIncidents(t.Context(), GetIncidentsParams{}, promLoader, amLoader)
+	assert.ErrorIs(t, err, alertsErr)
+	assert.Nil(t, result)
+	assert.Nil(t, structured)
+}
+
 func TestTransformPromValueToIncident(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -1233,11 +1258,12 @@ func TestGetAlertDataForIncidents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			incidents := getAlertDataForIncidents(ctx, tt.incidentsMap, tt.silencedAlerts, tt.promLoader, v1.Range{
+			incidents, err := getAlertDataForIncidents(ctx, tt.incidentsMap, tt.silencedAlerts, tt.promLoader, v1.Range{
 				Start: time.Now().Add(-30 * time.Minute),
 				End:   time.Now(),
 				Step:  300 * time.Second,
 			})
+			assert.NoError(t, err)
 
 			// Sort the actual and expected alerts slices before comparing to avoid test flakyness
 			for i := range incidents {

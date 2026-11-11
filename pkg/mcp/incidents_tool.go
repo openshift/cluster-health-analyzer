@@ -194,7 +194,10 @@ func (i *IncidentTool) GetIncidents(ctx context.Context, params GetIncidentsPara
 		return nil, nil, err
 	}
 
-	incidents := getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange)
+	incidents, err := getAlertDataForIncidents(ctx, incidentsMap, silences, promLoader, queryTimeRange)
+	if err != nil {
+		return nil, nil, err
+	}
 	reconcileFiringSeverity(incidents)
 	incidents = filterIncidentsBySeverity(incidents, minSeverity)
 
@@ -359,12 +362,13 @@ func getTokenFromCtx(ctx context.Context) (string, error) {
 
 // getAlertDataForIncidents queries Prometheus for firing alerts from the last 15 days (to have
 // some starting time) and then maps (the alert identifier is composed by name and namespace)
-// the active alerts to the provided map of incidents. It returns slice of the incidents.
-func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, silences []models.Alert, promAPI prom.Loader, qRange v1.Range) []Incident {
+// the active alerts to the provided map of incidents. It returns slice of the incidents
+// or an error when querying or processing the alerts fails.
+func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident, silences []models.Alert, promAPI prom.Loader, qRange v1.Range) ([]Incident, error) {
 	alertData, err := promAPI.LoadVectorRange(ctx, `ALERTS{alertstate!="pending"}`, qRange.Start, qRange.End, qRange.Step)
 	if err != nil {
 		slog.Error("Failed to query firing alerts", "error", err)
-		return nil
+		return nil, err
 	}
 
 	silencedAlertsMap := make(map[string][]models.Alert, len(silences))
@@ -435,7 +439,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 						lastSilenced, err := strconv.ParseBool(string(updatedAlertsMap[key][silencedStr]))
 						if err != nil {
 							slog.Error("failed to parse bool", "error", err)
-							return nil
+							return nil, err
 						}
 						// the && operator allow us to get the following behaviour
 						// if all are silenced the ending property will be true
@@ -459,7 +463,7 @@ func getAlertDataForIncidents(ctx context.Context, incidents map[string]Incident
 
 		incidentsSlice = append(incidentsSlice, inc)
 	}
-	return incidentsSlice
+	return incidentsSlice, nil
 }
 
 // cleanupLabels removes and renames some of the
