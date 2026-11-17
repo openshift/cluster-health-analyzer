@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"slices"
 	"testing"
 	"time"
 
@@ -446,9 +445,6 @@ func TestProcessorReloadsMatchersOnRuleChange(t *testing.T) {
 	}
 }
 
-// Removing an exclusion must not reclassify already-assigned alerts: each
-// firing alert keeps the incident it had before the rule change even when
-// the new rules would group it elsewhere.
 // A higher-priority custom rule claims new alerts by labels: matchers from
 // lower-priority rules (for example the default namespace grouping of a
 // pre-existing incident) must not capture them, and their new incidents must
@@ -464,7 +460,7 @@ func TestRulePriorityClaimsNewAlertsOverLowerPriorityMatchers(t *testing.T) {
 		require.NoError(t, err)
 		rules = append(rules, rule)
 	}
-	slices.SortFunc(rules, func(a, b *parsedRule) int { return int(a.Priority - b.Priority) })
+	sortRules(rules)
 	gc, err := NewGroupsCollection(&RulesSnapshot{rules: rules})
 	require.NoError(t, err)
 
@@ -505,13 +501,11 @@ func TestRulePriorityClaimsNewAlertsOverLowerPriorityMatchers(t *testing.T) {
 func TestProcessorReloadKeepsAssignmentsWhenExclusionRemoved(t *testing.T) {
 	twoRuleSnapshot := func(t *testing.T, excludeC bool) *RulesSnapshot {
 		t.Helper()
-		custom := `{"priority":0,"strategies":[{"match":{"allOf":["testgroup"]},"within":"24h","from":"start"` +
-			func() string {
-				if excludeC {
-					return `,"excludeAlerts":[{"alertname":"ChaLifecycleC"}]`
-				}
-				return ``
-			}() + `}]}`
+		exclusion := ""
+		if excludeC {
+			exclusion = `,"excludeAlerts":[{"alertname":"ChaLifecycleC"}]`
+		}
+		custom := `{"priority":0,"strategies":[{"match":{"allOf":["testgroup"]},"within":"24h","from":"start"` + exclusion + `}]}`
 		rules := make([]*parsedRule, 0, 2)
 		for name, spec := range map[string]string{"custom": custom, "default": `{"priority":100,"strategies":[{"match":{"anyOf":["namespace"]},"within":"24h","from":"start"}]}`} {
 			spec, err := decodeRuleSpec([]byte(spec))
@@ -520,8 +514,7 @@ func TestProcessorReloadKeepsAssignmentsWhenExclusionRemoved(t *testing.T) {
 			require.NoError(t, err)
 			rules = append(rules, rule)
 		}
-		// Deterministic rule order: custom (priority 0) before default.
-		slices.SortFunc(rules, func(a, b *parsedRule) int { return int(a.Priority - b.Priority) })
+		sortRules(rules)
 		return &RulesSnapshot{rules: rules}
 	}
 

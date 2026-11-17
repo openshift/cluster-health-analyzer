@@ -327,13 +327,8 @@ func (gc *GroupsCollection) newRootGroup(i Interval, inactive bool) *GroupMatche
 		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
 	}
 	if !inactive {
-		claim, claimed := gc.rules.claimingPriority(i.Metric)
-		for _, matcher := range gc.rules.rootGroupMatchers(i, rootGroupID) {
-			// A claimed alert's incident only grows temporal doors from rules
-			// at least as important as the claiming rule.
-			if claimed && matcher.strategy.Priority > claim {
-				continue
-			}
+		matchers := gc.rules.rootGroupMatchers(i, rootGroupID)
+		for _, matcher := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
 			gc.AddGroup(matcher)
 		}
 	}
@@ -348,14 +343,9 @@ func (gc *GroupsCollection) equivalentGroup(g *GroupMatcher) *GroupMatcher {
 		if existing.strategy != g.strategy || existing.RootGroupID != g.RootGroupID || len(existing.Matchers) != len(g.Matchers) {
 			continue
 		}
-		equal := true
-		for i, m := range existing.Matchers {
-			if !m.Equals(g.Matchers[i]) {
-				equal = false
-				break
-			}
-		}
-		if equal {
+		if slices.EqualFunc(existing.Matchers, g.Matchers, func(a, b common.LabelsSubsetMatcher) bool {
+			return a.Equals(b)
+		}) {
 			return existing
 		}
 	}
@@ -393,14 +383,8 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 		}
 
 		if iGroupMatcher.expandsMatchers() {
-			claim, claimed := gc.rules.claimingPriority(i.Metric)
-			for _, g := range gc.rules.alertGroupMatchers(i) {
-				// A claimed alert's incident only grows doors from rules at
-				// least as important as the claiming rule, so lower-priority
-				// strategies cannot pull other alerts in behind the claim.
-				if claimed && g.strategy.Priority > claim {
-					continue
-				}
+			matchers := gc.rules.alertGroupMatchers(i)
+			for _, g := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
 				if iGroupMatcher.isSubsetOf(g) {
 					iGroupMatcher.expandMatchers(g.Matchers)
 					iGroupMatcher.update(i)
@@ -560,12 +544,8 @@ func (gc *GroupsCollection) forcedRoot(id string, i Interval) *GroupMatcher {
 		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
 	}
 	gc.forcedRoots[id] = root
-	claim, claimed := gc.rules.claimingPriority(i.Metric)
-	for _, m := range gc.rules.rootGroupMatchers(i, id) {
-		// Match the temporal-door scoping of newly created incidents.
-		if claimed && m.strategy.Priority > claim {
-			continue
-		}
+	matchers := gc.rules.rootGroupMatchers(i, id)
+	for _, m := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
 		gc.AddGroup(m)
 	}
 	return root

@@ -237,13 +237,8 @@ func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 				labels: maps.Clone(labels), start: mt, end: mt, id: id,
 			})
 			interval := Interval{Metric: labels, Start: mt, End: mt}
-			claim, claimed := rules.claimingPriority(labels)
-			for _, m := range rules.alertGroupMatchers(interval) {
-				// Regenerate only matchers at least as important as the rule
-				// claiming the alert, matching live grouping semantics.
-				if claimed && m.strategy.Priority > claim {
-					continue
-				}
+			matchers := rules.alertGroupMatchers(interval)
+			for _, m := range rules.filterClaimedMatchers(labels, matchers) {
 				m.GroupID, m.RootGroupID = id, id
 				groups.AddGroup(m)
 			}

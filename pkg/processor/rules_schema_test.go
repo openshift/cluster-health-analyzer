@@ -20,6 +20,41 @@ func testRules(t *testing.T, specJSON string) *RulesSnapshot {
 	return &RulesSnapshot{rules: []*parsedRule{rule}}
 }
 
+func TestFilterClaimedMatchers(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		match   string
+		labels  model.LabelSet
+		claimed bool
+	}{
+		{"exact", `{"exact":true}`, model.LabelSet{"alertname": "A"}, true},
+		{"all labels", `{"allOf":["namespace","node"]}`, model.LabelSet{"namespace": "ns", "node": "n1"}, true},
+		{"missing label", `{"allOf":["namespace","node"]}`, model.LabelSet{"namespace": "ns"}, false},
+		{"any label", `{"anyOf":["namespace","node"]}`, model.LabelSet{"node": "n1"}, true},
+		{"no labels", `{"anyOf":["namespace","node"]}`, model.LabelSet{"alertname": "A"}, false},
+		{"temporal", `{}`, model.LabelSet{"alertname": "A"}, false},
+		{"excluded", `{"exact":true}`, model.LabelSet{"alertname": "Excluded"}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			exclusion := ""
+			if tt.match != `{}` {
+				exclusion = `,"excludeAlerts":[{"alertname":"Excluded"}]`
+			}
+			rules := testRules(t, `{"priority":50,"strategies":[{"match":`+tt.match+`,"within":"1h","from":"start"`+exclusion+`}]}`)
+			higher := &GroupMatcher{strategy: &parsedStrategy{Priority: 0}}
+			equal := &GroupMatcher{strategy: &parsedStrategy{Priority: 50}}
+			lower := &GroupMatcher{strategy: &parsedStrategy{Priority: 100}}
+			got := rules.filterClaimedMatchers(tt.labels, []*GroupMatcher{higher, lower, equal})
+			want := []*GroupMatcher{higher, lower, equal}
+			if tt.claimed {
+				want = []*GroupMatcher{higher, equal}
+			}
+			require.Equal(t, want, got, "filtering must preserve order and equal-priority matchers")
+			require.Empty(t, rules.filterClaimedMatchers(tt.labels, nil))
+		})
+	}
+}
+
 func TestParseRuleValidation(t *testing.T) {
 	for name, data := range map[string]string{
 		"missing strategies":   `{}`,

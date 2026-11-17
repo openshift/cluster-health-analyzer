@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/prometheus/common/model"
@@ -288,12 +289,8 @@ func hasAnyLabel(labels model.LabelSet, keys []model.LabelName) bool {
 	return false
 }
 
-// claimingPriority returns the priority of the best label-based strategy
-// that claims the alert: the lowest-priority rule whose selector matches
-// the alert's labels. Priority governs the whole grouping of a claimed
-// alert: matchers from higher-numbered (lower-priority) rules must neither
-// capture it nor attach to the incidents it creates, so a custom rule fully
-// owns the grouping of the alerts it matches.
+// claimingPriority returns the lowest numeric priority among label-based
+// strategies that allow the alert and have the required labels.
 func (rules *RulesSnapshot) claimingPriority(labels model.LabelSet) (int32, bool) {
 	best := int32(math.MaxInt32)
 	for _, rule := range rules.rules {
@@ -315,6 +312,17 @@ func (rules *RulesSnapshot) claimingPriority(labels model.LabelSet) (int32, bool
 		}
 	}
 	return best, best != math.MaxInt32
+}
+
+// filterClaimedMatchers removes lower-priority matchers from a freshly generated slice.
+func (rules *RulesSnapshot) filterClaimedMatchers(labels model.LabelSet, groups []*GroupMatcher) []*GroupMatcher {
+	claim, claimed := rules.claimingPriority(labels)
+	if !claimed {
+		return groups
+	}
+	return slices.DeleteFunc(groups, func(g *GroupMatcher) bool {
+		return g.strategy.Priority > claim
+	})
 }
 
 func (rules *RulesSnapshot) alertGroupMatchers(interval Interval) []*GroupMatcher {
