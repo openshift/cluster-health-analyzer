@@ -230,8 +230,20 @@ func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 	}
 	for id, alerts := range byID {
 		for i, labels := range alerts {
+			// Per-alert forced assignments keep each firing alert on its
+			// incident even when the new rules would group it elsewhere
+			// (for example after an exclusion is removed).
+			groups.assignments = append(groups.assignments, &historicalAssignment{
+				labels: maps.Clone(labels), start: mt, end: mt, id: id,
+			})
 			interval := Interval{Metric: labels, Start: mt, End: mt}
+			claim, claimed := rules.claimingPriority(labels)
 			for _, m := range rules.alertGroupMatchers(interval) {
+				// Regenerate only matchers at least as important as the rule
+				// claiming the alert, matching live grouping semantics.
+				if claimed && m.strategy.Priority > claim {
+					continue
+				}
 				m.GroupID, m.RootGroupID = id, id
 				groups.AddGroup(m)
 			}

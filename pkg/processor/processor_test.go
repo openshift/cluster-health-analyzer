@@ -3,6 +3,8 @@ package processor
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -441,6 +443,149 @@ func TestProcessorReloadsMatchersOnRuleChange(t *testing.T) {
 			require.Len(t, m.Labels, 1)
 			require.Contains(t, m.Labels, model.LabelName("node"))
 		}
+	}
+}
+
+// Removing an exclusion must not reclassify already-assigned alerts: each
+// firing alert keeps the incident it had before the rule change even when
+// the new rules would group it elsewhere.
+// A higher-priority custom rule claims new alerts by labels: matchers from
+// lower-priority rules (for example the default namespace grouping of a
+// pre-existing incident) must not capture them, and their new incidents must
+// not grow doors from lower-priority strategies.
+func TestRulePriorityClaimsNewAlertsOverLowerPriorityMatchers(t *testing.T) {
+	custom := `{"priority":0,"strategies":[{"match":{"allOf":["tenant"]},"within":"24h","from":"start","excludeAlerts":[{"alertname":"HighLatency"}]}]}`
+	deflt := `{"priority":100,"strategies":[{"match":{"anyOf":["namespace"]},"within":"24h","from":"start"},{"match":{},"within":"15m","from":"start"}]}`
+	var rules []*parsedRule
+	for name, spec := range map[string]string{"custom": custom, "default": deflt} {
+		spec, err := decodeRuleSpec([]byte(spec))
+		require.NoError(t, err)
+		rule, err := parseRule(name, spec)
+		require.NoError(t, err)
+		rules = append(rules, rule)
+	}
+	slices.SortFunc(rules, func(a, b *parsedRule) int { return int(a.Priority - b.Priority) })
+	gc, err := NewGroupsCollection(&RulesSnapshot{rules: rules})
+	require.NoError(t, err)
+
+	start := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	// A pre-existing incident in the same namespace, older than the temporal
+	// window so only its namespace matcher can capture new alerts.
+	pre := gc.ProcessAlertsBatch([]model.LabelSet{{"alertname": "TargetDown", "namespace": "om"}}, start)
+	preID := string(pre[0]["group_id"])
+	require.NotEmpty(t, preID)
+
+	at := start.Add(16 * time.Minute)
+	got := gc.ProcessAlertsBatch([]model.LabelSet{
+		{"alertname": "NodeError", "namespace": "om", "tenant": "t1"},
+		{"alertname": "StorageError", "namespace": "om", "tenant": "t1"},
+		{"alertname": "NodeError", "namespace": "om", "tenant": "t2"},
+		{"alertname": "HighLatency", "namespace": "om", "tenant": "t2"},
+	}, at)
+	byName := map[string]string{}
+	for _, alert := range got {
+		byName[string(alert["alertname"])+string(alert["tenant"])] = string(alert["group_id"])
+	}
+	t1a, t1b := byName["NodeErrort1"], byName["StorageErrort1"]
+	t2 := byName["NodeErrort2"]
+	require.NotEmpty(t, t1a)
+	require.Equal(t, t1a, t1b, "alerts sharing tenant t1 must share an incident")
+	require.NotEmpty(t, t2)
+	require.NotEqual(t, t1a, t2, "alerts with different tenants must not share an incident")
+	require.NotEqual(t, preID, t1a, "tenant alerts must not join the pre-existing incident")
+	require.NotEqual(t, preID, t2, "tenant alerts must not join the pre-existing incident")
+	// HighLatency is excluded from the custom rule, so the default rules apply
+	// to it: it may join the pre-existing same-namespace incident, but the
+	// exclusion must keep it out of the tenant incidents.
+	high := byName["HighLatencyt2"]
+	require.NotEqual(t, t1a, high, "excluded alert must not join the t1 incident")
+	require.NotEqual(t, t2, high, "excluded alert must not join the t2 incident")
+}
+
+func TestProcessorReloadKeepsAssignmentsWhenExclusionRemoved(t *testing.T) {
+	twoRuleSnapshot := func(t *testing.T, excludeC bool) *RulesSnapshot {
+		t.Helper()
+		custom := `{"priority":0,"strategies":[{"match":{"allOf":["testgroup"]},"within":"24h","from":"start"` +
+			func() string {
+				if excludeC {
+					return `,"excludeAlerts":[{"alertname":"ChaLifecycleC"}]`
+				}
+				return ``
+			}() + `}]}`
+		rules := make([]*parsedRule, 0, 2)
+		for name, spec := range map[string]string{"custom": custom, "default": `{"priority":100,"strategies":[{"match":{"anyOf":["namespace"]},"within":"24h","from":"start"}]}`} {
+			spec, err := decodeRuleSpec([]byte(spec))
+			require.NoError(t, err)
+			rule, err := parseRule(name, spec)
+			require.NoError(t, err)
+			rules = append(rules, rule)
+		}
+		// Deterministic rule order: custom (priority 0) before default.
+		slices.SortFunc(rules, func(a, b *parsedRule) int { return int(a.Priority - b.Priority) })
+		return &RulesSnapshot{rules: rules}
+	}
+
+	ctrl := gomock.NewController(t)
+	loader := mocks.NewMockPrometheusLoader(ctrl)
+	am := mocks.NewMockAlertManagerLoader(ctrl)
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	current := twoRuleSnapshot(t, true)
+	alerts := []model.LabelSet{
+		{"alertname": "ChaLifecycleA", "testgroup": "g1", "namespace": "ns1"},
+		{"alertname": "ChaLifecycleB", "testgroup": "g1", "namespace": "ns1"},
+		{"alertname": "TargetDown", "namespace": "ns2"},
+		{"alertname": "ChaLifecycleC", "testgroup": "g1", "namespace": "ns2"},
+	}
+	p := &processor{
+		loader: loader, amLoader: am,
+		rulesSource: func() *RulesSnapshot { return current },
+	}
+	initialGroups, err := NewGroupsCollection(current)
+	require.NoError(t, err)
+	p.groupsCollection = initialGroups
+	// First batch under the excluding rules: A and B share one incident via
+	// testgroup, C joins TargetDown via namespace.
+	// loadAlerts mutates the returned label sets (it adds group_id), so each
+	// batch needs fresh copies like a real query would return.
+	batch := func() []model.LabelSet {
+		out := make([]model.LabelSet, len(alerts))
+		for i, a := range alerts {
+			out[i] = maps.Clone(a)
+		}
+		return out
+	}
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now).Return(batch(), nil)
+	am.EXPECT().SilencedAlerts().Return(nil, nil)
+	got, err := p.loadAlerts(context.Background(), now)
+	require.NoError(t, err)
+	byName := map[string]string{}
+	for _, alert := range got {
+		byName[string(alert["alertname"])] = string(alert["group_id"])
+	}
+	customID, defaultID := byName["ChaLifecycleA"], byName["ChaLifecycleC"]
+	require.NotEmpty(t, customID)
+	require.Equal(t, customID, byName["ChaLifecycleB"])
+	require.Equal(t, defaultID, byName["TargetDown"])
+	require.NotEqual(t, customID, defaultID)
+
+	// Remove the exclusion and reload: existing assignments must not move.
+	current = twoRuleSnapshot(t, false)
+	// Assignments stay alive while the alert keeps firing: each poll
+	// extends the covered interval, so batches chained within the tolerance
+	// keep the incident indefinitely.
+	for _, at := range []time.Time{now.Add(time.Minute), now.Add(10 * time.Minute), now.Add(20 * time.Minute)} {
+		loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, at).Return(batch(), nil)
+		am.EXPECT().SilencedAlerts().Return(nil, nil)
+		got, err = p.loadAlerts(context.Background(), at)
+		require.NoError(t, err)
+		byName = map[string]string{}
+		for _, alert := range got {
+			byName[string(alert["alertname"])] = string(alert["group_id"])
+		}
+		require.Equal(t, customID, byName["ChaLifecycleA"], "at %s: assigned alert must keep its incident", at)
+		require.Equal(t, customID, byName["ChaLifecycleB"], "at %s: assigned alert must keep its incident", at)
+		require.Equal(t, defaultID, byName["ChaLifecycleC"], "at %s: assigned alert must keep its incident", at)
+		require.Equal(t, defaultID, byName["TargetDown"], "at %s: assigned alert must keep its incident", at)
 	}
 }
 

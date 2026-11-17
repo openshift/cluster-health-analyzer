@@ -90,6 +90,12 @@ func (c *Cluster) GetSelector(ctx context.Context, resourceType, name string) (s
 	return output, nil
 }
 
+// Get returns the YAML of a namespaced resource, so tests can save and
+// restore cluster state they temporarily modify.
+func (c *Cluster) Get(ctx context.Context, resourceType, name string) (string, error) {
+	return c.output(ctx, "get", resourceType, name, "-o", "yaml")
+}
+
 // --- Deployment Status ---
 
 // IsDeploymentAvailable checks if a deployment is available.
@@ -343,7 +349,6 @@ func (c *Cluster) run(ctx context.Context, args ...string) error {
 	}
 	return nil
 }
-
 
 func (c *Cluster) runWithStdin(ctx context.Context, stdin string, args ...string) error {
 	args = c.addNamespace(args)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"time"
@@ -275,6 +276,45 @@ func hasAllLabels(labels model.LabelSet, keys []model.LabelName) bool {
 		}
 	}
 	return true
+}
+
+// hasAnyLabel reports whether any key is present in the label set.
+func hasAnyLabel(labels model.LabelSet, keys []model.LabelName) bool {
+	for _, key := range keys {
+		if _, ok := labels[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// claimingPriority returns the priority of the best label-based strategy
+// that claims the alert: the lowest-priority rule whose selector matches
+// the alert's labels. Priority governs the whole grouping of a claimed
+// alert: matchers from higher-numbered (lower-priority) rules must neither
+// capture it nor attach to the incidents it creates, so a custom rule fully
+// owns the grouping of the alerts it matches.
+func (rules *RulesSnapshot) claimingPriority(labels model.LabelSet) (int32, bool) {
+	best := int32(math.MaxInt32)
+	for _, rule := range rules.rules {
+		for _, s := range rule.Strategies {
+			if s.operator == "" || !s.allows(labels) || s.Priority >= best {
+				continue
+			}
+			switch s.operator {
+			case "allOf":
+				if !hasAllLabels(labels, s.Keys) {
+					continue
+				}
+			case "anyOf":
+				if !hasAnyLabel(labels, s.Keys) {
+					continue
+				}
+			}
+			best = s.Priority
+		}
+	}
+	return best, best != math.MaxInt32
 }
 
 func (rules *RulesSnapshot) alertGroupMatchers(interval Interval) []*GroupMatcher {

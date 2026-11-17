@@ -64,9 +64,18 @@ func newRulesWatcher(client kubernetes.Interface) (*RulesWatcher, error) {
 		)
 		informer := factory.Core().V1().ConfigMaps().Informer()
 		_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc:    func(_ interface{}) { watcher.rebuild() },
-			UpdateFunc: func(_, _ interface{}) { watcher.rebuild() },
-			DeleteFunc: func(_ interface{}) { watcher.rebuild() },
+			AddFunc: func(_ interface{}) {
+				slog.Info("Incident rules ConfigMap detected", "configmap", name, "event", "add")
+				watcher.rebuild()
+			},
+			UpdateFunc: func(_, _ interface{}) {
+				slog.Info("Incident rules ConfigMap updated", "configmap", name, "event", "update")
+				watcher.rebuild()
+			},
+			DeleteFunc: func(_ interface{}) {
+				slog.Info("Incident rules ConfigMap removed", "configmap", name, "event", "delete")
+				watcher.rebuild()
+			},
 		})
 		if err != nil {
 			return nil, err

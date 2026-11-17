@@ -327,11 +327,39 @@ func (gc *GroupsCollection) newRootGroup(i Interval, inactive bool) *GroupMatche
 		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
 	}
 	if !inactive {
+		claim, claimed := gc.rules.claimingPriority(i.Metric)
 		for _, matcher := range gc.rules.rootGroupMatchers(i, rootGroupID) {
+			// A claimed alert's incident only grows temporal doors from rules
+			// at least as important as the claiming rule.
+			if claimed && matcher.strategy.Priority > claim {
+				continue
+			}
 			gc.AddGroup(matcher)
 		}
 	}
 	return &ret
+}
+
+// equivalentGroup returns the existing matcher that covers the same
+// selectors and incident as g, or nil. Regenerated matchers can refresh it
+// instead of being added again on every batch.
+func (gc *GroupsCollection) equivalentGroup(g *GroupMatcher) *GroupMatcher {
+	for _, existing := range gc.Groups {
+		if existing.strategy != g.strategy || existing.RootGroupID != g.RootGroupID || len(existing.Matchers) != len(g.Matchers) {
+			continue
+		}
+		equal := true
+		for i, m := range existing.Matchers {
+			if !m.Equals(g.Matchers[i]) {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return existing
+		}
+	}
+	return nil
 }
 
 func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatcher *GroupMatcher) []GroupedInterval {
@@ -365,13 +393,26 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 		}
 
 		if iGroupMatcher.expandsMatchers() {
+			claim, claimed := gc.rules.claimingPriority(i.Metric)
 			for _, g := range gc.rules.alertGroupMatchers(i) {
+				// A claimed alert's incident only grows doors from rules at
+				// least as important as the claiming rule, so lower-priority
+				// strategies cannot pull other alerts in behind the claim.
+				if claimed && g.strategy.Priority > claim {
+					continue
+				}
 				if iGroupMatcher.isSubsetOf(g) {
 					iGroupMatcher.expandMatchers(g.Matchers)
 					iGroupMatcher.update(i)
 				} else {
 					g.RootGroupID = iGroupMatcher.RootGroupID
-					newGc.AddGroup(g)
+					// A batch may regenerate a matcher an existing group already
+					// covers: refresh that group instead of adding a duplicate.
+					if existing := gc.equivalentGroup(g); existing != nil {
+						existing.update(i)
+					} else {
+						newGc.AddGroup(g)
+					}
 				}
 			}
 		}
@@ -402,7 +443,14 @@ func (gc *GroupsCollection) bestMatch(interval Interval) *GroupMatcher {
 		}
 		return matches[i].TimeDist < matches[j].TimeDist
 	})
-	return matches[0].GroupMatcher
+	winner := matches[0].GroupMatcher
+	if claim, ok := gc.rules.claimingPriority(interval.Metric); ok && winner.strategy.Priority > claim {
+		// A higher-priority rule claims this alert by labels: matchers from
+		// lower-priority rules must not capture it, so it starts a new
+		// incident under the claiming rule instead.
+		return nil
+	}
+	return winner
 }
 
 func (gc *GroupsCollection) matches(interval Interval) []match {
@@ -488,6 +536,10 @@ func (gc *GroupsCollection) forcedAssignment(i Interval) *GroupMatcher {
 		if i.Start < a.start.Add(-previousIncidentsTolerance) || i.Start > a.end.Add(previousIncidentsTolerance) {
 			continue
 		}
+		// Extend the covered interval so a firing alert keeps its assignment
+		// beyond the initial tolerance window; it expires after the alert
+		// stops firing.
+		a.end = max(a.end, i.End)
 		return gc.forcedRoot(a.id, i)
 	}
 	return nil
@@ -508,7 +560,12 @@ func (gc *GroupsCollection) forcedRoot(id string, i Interval) *GroupMatcher {
 		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
 	}
 	gc.forcedRoots[id] = root
+	claim, claimed := gc.rules.claimingPriority(i.Metric)
 	for _, m := range gc.rules.rootGroupMatchers(i, id) {
+		// Match the temporal-door scoping of newly created incidents.
+		if claimed && m.strategy.Priority > claim {
+			continue
+		}
 		gc.AddGroup(m)
 	}
 	return root

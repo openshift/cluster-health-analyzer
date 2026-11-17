@@ -47,6 +47,7 @@ exact fallback window of five days, now expressed as `within: 120h`.
 | [Initial configuration](#startup) | Incident processing requires a valid ConfigMap at startup; there is no silent built-in fallback. |
 | [Custom rules](#configuration-format-and-deployment) | Configured rules replace the default strategy list rather than extending it. Default matching paths and fallback windows are not implicitly retained. |
 | [Batch grouping](#rules-prevail-over-batching) | Alerts group only through rules, not merely because they arrived together. |
+| [Priority claiming](#priority-claims-the-whole-grouping) | A rule that claims an alert by labels owns its whole grouping: lower-priority rules can neither capture the alert nor attach doors to its incident. With only the default rules nothing changes. |
 | [Live configuration updates](#runtime) | Valid changes are adopted without restarting CHA. Invalid updates or ConfigMap deletion retain the last valid snapshot; a restart still requires valid configuration. |
 | [Namespace](#namespace-selection) | Explicit environment override takes precedence over pod discovery and `default`. |
 | [Time windows](#validation-and-configuration-lifecycle) | Matching windows are configurable up to seven days; larger values are rejected. |
@@ -108,7 +109,7 @@ data:
 |---|---|
 | `rules` | Required, nonempty list of rules. |
 | `name` | Required, nonempty rule name; also used to break priority ties. Use distinct names for predictable ordering. |
-| `priority` | Optional integer in `[0, 100]`; defaults to `0`. Lower values take precedence. Default rules ship at `100`, so user rules always match first. |
+| `priority` | Optional integer in `[0, 100]`; defaults to `0`. Lower values take precedence. Default rules ship at `100`, so user rules always match first. Priority governs the whole grouping of claimed alerts, not only candidate ordering; see [priority claims the whole grouping](#priority-claims-the-whole-grouping). |
 | `strategies` | Required, nonempty ordered list. Earlier strategies take precedence within a rule. |
 | `match` | Required. Use exactly one of `exact: true`, `allOf: [keys]`, `anyOf: [keys]`, or an empty map `{}` for time-only matching. |
 | `within` | Required positive duration, at most `168h` (seven days). Use `h`, `m`, or `s`, including combinations such as `1h30m`; maximum string length is 32 characters. |
@@ -545,6 +546,56 @@ global tie-breaker. Avoid relying on ties to select a particular incident.
 
 Source: `matches` and `bestMatch` in [incidents.go](../pkg/processor/incidents.go).
 
+### Priority claims the whole grouping
+
+The ranking above orders **existing** matchers, but it cannot help an alert
+whose claiming rule has no matcher yet: a new alert with `tenant: t1` finds no
+`{tenant: t1}` matcher until an incident for that tenant exists. Before this
+behavior existed, the only matchers eligible for such an alert were the ones
+from lower-priority rules — for example the default `anyOf: [namespace]` door
+of a pre-existing incident in the same namespace — so the alert was captured
+there, and the incident then grew `{tenant: ...}` matchers of its own. One old
+namespace-level incident could this way absorb every new alert in the
+namespace, including alerts a custom rule was meant to group separately.
+
+Priority therefore now governs the **entire grouping** of an alert, not only
+the ordering of candidates. A label-based strategy **claims** an alert when
+the strategy allows it (exclusions respected) and its operator matches the
+alert's labels: `exact` claims every allowed alert, `allOf` requires all the
+listed keys to be present, `anyOf` requires at least one. The claiming
+priority of an alert is the lowest `priority` among the rules whose label
+strategies claim it; time-only strategies never claim. The claim is enforced
+in four places:
+
+| Where | Enforcement |
+|---|---|
+| `bestMatch` | If the winning matcher belongs to a rule with a worse (higher) priority than the claiming one, the alert is treated as unmatched: it starts a new incident under the claiming rule instead of being captured. |
+| Matcher regeneration (`addIntervalsGroups`) | An incident that a claimed alert joins only grows label doors from rules at least as important as the claiming rule, so lower-priority strategies cannot pull other alerts in behind the claim. |
+| New and forced roots (`newRootGroup`, `forcedRoot`) | The same scoping applies to time-only doors: an incident created by a claimed alert gets no temporal matcher from lower-priority rules. |
+| Rule reload (`adoptRules`) | Matchers regenerated for known assignments follow the same scoping, so a reload does not reopen lower-priority doors. |
+
+**Why:** this is what `priority` promises. A custom rule at `priority: 0`
+that groups by `tenant` owns the grouping of every alert carrying `tenant`:
+other alerts with the same `tenant` may join, and nothing else may capture
+them or attach to their incident through a lower-priority rule. Consequences:
+
+- An alert **excluded** from the claiming strategy is not claimed by that
+  rule, so lower-priority rules apply to it again: it can join a pre-existing
+  same-namespace incident, but it cannot enter the claiming rule's incidents,
+  because those carry no lower-priority doors.
+- An alert claimed by a custom rule that resolves and re-fires **within** the
+  strategy's `within` window (measured from the group's last observation)
+  rejoins its incident through the claiming rule's matcher. Beyond the window
+  it gets a new incident: the default rules' exact fallback no longer reunites
+  it, because that door belongs to a lower-priority rule.
+- With **only the default rules** nothing changes: all shipped strategies
+  share `priority: 100`, so the claim never overrides a default matcher, and
+  legacy time-proximity and fuzzy-namespace grouping behave exactly as before.
+
+Source: `claimingPriority` in [rules.go](../pkg/processor/rules.go); the
+enforcement points in [incidents.go](../pkg/processor/incidents.go) and
+[processor.go](../pkg/processor/processor.go).
+
 ### Default strategy order
 
 The [default ConfigMap](../manifests/backend/09_incident_rule_defaults.yaml)
@@ -836,6 +887,7 @@ covered or that cluster-level verification has passed:
 | Area | Test references |
 |---|---|
 | Parsing, exclusions, priority, windows, shared exact timelines | `TestParseRuleValidation`, `TestExcludedAlertsCannotMatchExistingFuzzyMatcher`, `TestRulePriorityPrecedesStrategyOrder`, `TestRuleWindowConfiguration`, `TestRuleWindowMaximum`, `TestExactFallbackKeepsLatestObservation` in [rules_schema_test.go](../pkg/processor/rules_schema_test.go) |
+| Priority claiming the whole grouping | `TestRulePriorityClaimsNewAlertsOverLowerPriorityMatchers` in [processor_test.go](../pkg/processor/processor_test.go) |
 | Mandatory labels and batch grouping | `TestAllOfRequiresEveryLabel`, `TestRulesOverrideInitialBatchGrouping` in [rules_test.go](../pkg/processor/rules_test.go); `TestWatchdogSafeguardSeparatesUnmatchedAlerts` in [rules_schema_test.go](../pkg/processor/rules_schema_test.go) |
 | Last-valid configuration and namespace selection | `TestRulesWatcherStartRequiresValidRules`, `TestRulesWatcherRebuildInvalidatesChangedDefinitions`, `TestRulesWatcherObservesUpdatesAndDeletion`, `TestRulesNamespacePrecedence` in [rules_watcher_test.go](../pkg/processor/rules_watcher_test.go) |
 | Reload and historical identity | `TestProcessorReloadsMatchersOnRuleChange`, `TestProcessorFailedReloadDoesNotPublishPartialState`, `TestRestartAfterRuleChangePreservesAssignments`, `TestHistoricalAssignmentCorrelation` in [processor_test.go](../pkg/processor/processor_test.go) |
