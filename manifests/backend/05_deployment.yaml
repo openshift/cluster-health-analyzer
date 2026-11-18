@@ -20,7 +20,7 @@ spec:
       automountServiceAccountToken: true
       containers:
       - name: cluster-health-analyzer
-        image: "quay.io/openshiftanalytics/cluster-health-analyzer:latest"
+        image: "quay.io/rh-ee-criolo/cluster-health-analyzer:id2.0"
         imagePullPolicy: Always
         args:
           - serve

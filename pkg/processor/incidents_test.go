@@ -1,7 +1,6 @@
 package processor
 
 import (
-	"math"
 	"slices"
 	"testing"
 	"time"
@@ -19,7 +18,7 @@ func TestGroupsCollectionProcessAlertsBatch(t *testing.T) {
 	start := model.TimeFromUnixNano(
 		time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano())
 
-	gc := GroupsCollection{}
+	gc := newTestGroupsCollection(t)
 
 	// Case 1: An alert arrives without any previous alerts history.
 	//
@@ -50,14 +49,14 @@ func TestGroupsCollectionProcessAlertsBatch(t *testing.T) {
 	assert.Equal(t, case3[0]["group_id"], case3[1]["group_id"])
 
 	// Case 4: Alert with same alertname as one from case 2 fires within
-	// [processor.fuzzyMatchTimeDelta] time range.
+	// the configured fuzzy matching window.
 	//
 	// It should match the group created in case 3.
 	alerts = []model.LabelSet{{"alertname": "Alert3.1"}}
 	case4 := gc.ProcessAlertsBatch(alerts, start.Add(7*time.Hour).Time())
 	assert.Equal(t, case3[0]["group_id"], case4[0]["group_id"])
 
-	// Case 5: Alert from the same namespace firing within [processor.fuzzyMatchTimeDelta]
+	// Case 5: Alert from the same namespace firing within the configured fuzzy matching window
 	//
 	// It should match with the last active group from the same namespace.
 	alerts = []model.LabelSet{
@@ -93,41 +92,26 @@ func TestGroupsCollectionPruneGroups(t *testing.T) {
 	start := model.TimeFromUnixNano(
 		time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixNano())
 
-	gc := GroupsCollection{}
+	gc := newTestGroupsCollection(t)
 
-	// Time-based matcher should be pruned after [processor.fuzzyMatchTimeDelta]
-	gc.AddGroup(&GroupMatcher{
-		GroupID:  "time-matcher",
-		Start:    start.Add(1 * time.Hour),
-		Modified: start.Add(1 * time.Hour),
-		End:      start.Add(3 * time.Hour),
-		Distance: math.Inf(1)})
-
-	// Fuzzy matcher should be pruned after [processor.fuzzyMatchTimeDelta]
-	gc.AddGroup(&GroupMatcher{
-		GroupID:  "fuzzy-matcher-old",
-		Start:    start.Add(1 * time.Hour),
-		Modified: start.Add(1 * time.Hour),
-		End:      start.Add(3 * time.Hour),
-		Distance: 1})
-
-	// This fuzzy-matcher can be still relevant, as it was modified recently.
-	// It should not be pruned.
-	gc.AddGroup(&GroupMatcher{
-		GroupID:  "fuzzy-matcher-recent",
-		Start:    start.Add(1 * time.Hour),
-		Modified: start.Add(24 * time.Hour),
-		End:      start.Add(3 * time.Hour),
-		Distance: 1})
-
-	// Direct matcher should be pruned after [processor.directMatchTimeDelta]
-	// It can be active for longer time and should not be pruned first.
-	gc.AddGroup(&GroupMatcher{
-		GroupID:  "direct-matcher",
-		Start:    start.Add(1 * time.Hour),
-		Modified: start.Add(1 * time.Hour),
-		End:      start.Add(3 * time.Hour),
-		Distance: 0})
+	for _, test := range []struct {
+		id       string
+		strategy int
+		modified time.Duration
+	}{
+		{"time-matcher", 3, time.Hour},
+		{"fuzzy-matcher-old", 1, time.Hour},
+		{"fuzzy-matcher-recent", 1, 24 * time.Hour},
+		{"direct-matcher", 4, time.Hour},
+	} {
+		gc.AddGroup(&GroupMatcher{
+			GroupID: test.id,
+			matcherTimeline: &matcherTimeline{
+				Start: start.Add(time.Hour), Modified: start.Add(test.modified), End: start.Add(3 * time.Hour),
+			},
+			strategy: gc.rules.rules[0].Strategies[test.strategy],
+		})
+	}
 
 	gc.PruneGroups(start.Add(26 * time.Hour).Time())
 
@@ -201,7 +185,7 @@ func TestGroupsCollectionProcessHistoricalAlerts(t *testing.T) {
 
 	alerts := utils.RelativeIntervalsToRangeVectors(alertsIntervals, start, 1*time.Minute)
 
-	gc := GroupsCollection{}
+	gc := newTestGroupsCollection(t)
 
 	gc.processHistoricalAlerts(alerts)
 
@@ -274,7 +258,7 @@ func TestGroupsCollectionUpdateGroupUUIDs(t *testing.T) {
 
 	alerts := utils.RelativeIntervalsToRangeVectors(alertsIntervals, start, 1*time.Minute)
 
-	gc := GroupsCollection{}
+	gc := newTestGroupsCollection(t)
 	gc.processHistoricalAlerts(alerts)
 
 	mappings := utils.RelativeIntervalsToRangeVectors(mappingIntervals, start, 1*time.Minute)
