@@ -229,6 +229,15 @@ func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 		byID[id] = append(byID[id], labels)
 	}
 	for id, alerts := range byID {
+		// The Watchdog safeguard applies on reload too: its incident gets no
+		// temporal matchers, same as newRootGroup for fresh incidents.
+		watchdog := false
+		for _, a := range alerts {
+			if watchdogAlert(Interval{Metric: a}) {
+				watchdog = true
+				break
+			}
+		}
 		for i, labels := range alerts {
 			// Per-alert forced assignments keep each firing alert on its
 			// incident even when the new rules would group it elsewhere
@@ -242,7 +251,7 @@ func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 				m.GroupID, m.RootGroupID = id, id
 				groups.AddGroup(m)
 			}
-			if i == 0 {
+			if i == 0 && !watchdog {
 				// One temporal matcher per incident keeps time-based joining
 				// available under the new rules.
 				for _, m := range rules.rootGroupMatchers(interval, id) {

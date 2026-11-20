@@ -445,6 +445,31 @@ func TestProcessorReloadsMatchersOnRuleChange(t *testing.T) {
 	}
 }
 
+// The Watchdog safeguard holds across a rules reload: the recovered Watchdog
+// incident must not get temporal matchers via adoptRules.
+func TestAdoptRulesKeepsWatchdogSafeguard(t *testing.T) {
+	original := newTestGroupsCollection(t)
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	assigned := original.ProcessAlertsBatch([]model.LabelSet{{"alertname": "Watchdog", "namespace": "openshift-monitoring"}}, now.Add(-time.Hour))
+	id := string(assigned[0]["group_id"])
+	replacement := testRules(t, `{"strategies":[{"match":{"exact":true},"within":"24h","from":"end"},{"match":{},"within":"15m","from":"start"}]}`)
+	p := &processor{
+		groupsCollection: original,
+		rulesSource:     func() *RulesSnapshot { return replacement },
+		assignedAlerts: []model.LabelSet{
+			{"alertname": "Watchdog", "namespace": "openshift-monitoring", "group_id": model.LabelValue(id)},
+		},
+	}
+	require.NoError(t, p.adoptRules(replacement, now))
+	for _, g := range p.groupsCollection.Groups {
+		if g.RootGroupID != id {
+			continue
+		}
+		require.NotNil(t, g.strategy)
+		require.NotEmpty(t, g.strategy.operator, "Watchdog incident must have no time-only matcher")
+	}
+}
+
 // A higher-priority custom rule claims new alerts by labels: matchers from
 // lower-priority rules (for example the default namespace grouping of a
 // pre-existing incident) must not capture them, and their new incidents must
