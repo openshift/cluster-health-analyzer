@@ -10,6 +10,7 @@
 - [Server and Integrations](docs/server-and-integrations.md) — HTTP server, Prometheus metrics, Thanos client, Alertmanager silences, auth & TLS
 - [Build and Deployment](docs/build-and-deployment.md) — Build system, containerization, deployment manifests, dev scripts
 - [Testing Infrastructure](docs/testing-infrastructure.md) — Unit tests, integration tests, simulation, test helpers & fixtures
+- [Debug Endpoints](docs/DEBUG_ENDPOINTS.md) — Dev-build endpoints for inspecting in-memory matcher state
 
 ## Quick Reference
 

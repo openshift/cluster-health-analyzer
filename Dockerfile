@@ -17,7 +17,12 @@ ENV GOOS=${TARGETOS:-linux}
 ENV GOARCH=${TARGETARCH}
 ENV CGO_ENABLED=1
 ENV GOFLAGS=-mod=readonly
-RUN go build -tags strictfipsruntime -o /bin/cluster-health-analyzer
+# BUILD_TAGS=testonly additionally includes the dev-only debug endpoints
+# (see docs/DEBUG_ENDPOINTS.md).
+ARG BUILD_TAGS=strictfipsruntime
+RUN go build -tags ${BUILD_TAGS} \
+    -ldflags "-X github.com/openshift/cluster-health-analyzer/cmd.Version=dev-local" \
+    -o /bin/cluster-health-analyzer
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 

@@ -136,6 +136,8 @@ func StartServer(interval time.Duration, server Server, options common.Options) 
 		}
 
 		processor.Start(ctx)
+
+		registerIncidentStateEndpoint(server, processor)
 	} else {
 		slog.Info("Incident detection is disabled")
 	}

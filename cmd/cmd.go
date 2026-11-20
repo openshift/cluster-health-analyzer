@@ -30,4 +30,5 @@ func init() {
 	rootCmd.AddCommand(simulate.SimulateCmd)
 	rootCmd.AddCommand(serve.ServeCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
+	rootCmd.AddCommand(VersionCmd)
 }

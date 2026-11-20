@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"sync"
 	"time"
 
 	"github.com/openshift/cluster-health-analyzer/pkg/alertmanager"
@@ -42,7 +43,10 @@ type processor struct {
 	loader           prom.Loader
 	amLoader         alertmanager.Loader
 	groupsCollection *GroupsCollection
-	rulesSource      func() *RulesSnapshot
+	// stateMu guards groupsCollection against concurrent reads from debug
+	// snapshots while the processing loop mutates it.
+	stateMu     sync.RWMutex
+	rulesSource func() *RulesSnapshot
 
 	// assignedAlerts holds the latest processed firing alerts with their
 	// group_id, so a rules change can preserve known assignments.
@@ -128,7 +132,9 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 
 	slog.Info("Updating group-ids")
 	groups.UpdateGroupUUIDs(healthMapRV)
+	p.stateMu.Lock()
 	p.groupsCollection = groups
+	p.stateMu.Unlock()
 
 	return nil
 }
@@ -307,11 +313,15 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 		if rules == nil || len(rules.rules) == 0 {
 			return nil, fmt.Errorf("no valid IncidentRules loaded")
 		}
-		if p.groupsCollection != nil && p.groupsCollection.rules != rules {
+		p.stateMu.Lock()
+		adopt := p.groupsCollection != nil && p.groupsCollection.rules != rules
+		if adopt {
 			if err := p.adoptRules(rules, t); err != nil {
+				p.stateMu.Unlock()
 				return nil, fmt.Errorf("failed to adopt IncidentRules: %w", err)
 			}
 		}
+		p.stateMu.Unlock()
 	}
 	alerts, err := p.loader.LoadQuery(ctx, `ALERTS{alertstate="firing"}`, t)
 	if err != nil {
@@ -319,8 +329,12 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 	}
 
 	if p.groupsCollection != nil {
+		// Hold the write lock for the whole batch: the collection and the
+		// recorded assignments mutate together and debug snapshots read both.
+		p.stateMu.Lock()
 		alerts = p.assignAlertsToGroups(alerts, t)
 		p.recordAssignments(alerts)
+		p.stateMu.Unlock()
 	}
 
 	alerts, err = p.evaluateSilences(alerts)
