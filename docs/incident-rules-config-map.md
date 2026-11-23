@@ -61,6 +61,11 @@ exact fallback window of five days, now expressed as `within: 120h`.
 - **Live reload does not guarantee assignment preservation.** Only currently
   firing alerts seed the rebuild, and matcher time references reset. See
   [reload limitations](#reload-implementation-and-limits).
+- **Live reload preserves an absorbing temporal window per incident.**
+  Incidents that are still firing when the rules change keep a time-only
+  matcher regenerated at the reload time, which can capture alerts the new
+  rules would group elsewhere. See
+  [temporal absorption after a reload](#temporal-absorption-after-a-reload).
 - **Fully tied candidates have no guaranteed global tie-breaker.** See
   [candidate ranking](#ranking-eligible-candidates).
 - **Cluster-level verification remains necessary.** Unit tests do not establish
@@ -779,6 +784,187 @@ identity independent of matching and sufficient observations within the history
 horizon. See `recordAssignments` and `adoptRules` in
 [processor.go](../pkg/processor/processor.go), and the reload tests in
 [processor_test.go](../pkg/processor/processor_test.go).
+
+### Temporal absorption after a reload
+
+The reload path is intended to preserve known incidents, and time-only
+matchers are part of that preservation by design. This section explains what
+`adoptRules` regenerates for each surviving incident, why a re-firing alert
+can rejoin its old incident against the new rules, when the window expires,
+and how to make the outcome predictable when that matters.
+
+#### What the reload regenerates
+
+When a valid rule change is adopted, the processor rebuilds its matcher
+collection from the **currently firing alerts only** (the assignments
+recorded in the last processing pass). For each incident that still has
+firing alerts, the replacement collection receives:
+
+- the label selectors the **new** rules produce for those firing alerts,
+  anchored to the incident's existing ID — so alerts that were already firing
+  keep their incident even when the new rules would group them elsewhere;
+- one **temporal matcher** for each `match: {}` strategy, with its time
+  reference reset to the reload time and no label selectors; and
+- per-alert forced assignments for the firing alerts themselves, matching
+  their complete labels exactly.
+
+An alert that **resolved before the reload** has none of this protection: it
+is absent from the recorded assignments, so nothing anchors it to its old
+incident by label. Its only path back to the old incident is the regenerated
+matcher state above.
+
+A temporal matcher has no label selectors, so — exactly as in normal
+processing — it accepts **any** alert that starts within its `within` window
+of its reference time. After a reload this has a consequence worth knowing:
+
+> **An alert that resolves before a rule change and re-fires after it can
+> rejoin its old incident through the regenerated temporal window, even
+> though the new rules would assign it to a different incident.** The same
+> window can also absorb new, unrelated alerts. This holds as long as the
+> incident keeps firing alerts, because each observation extends the
+> reference time; once every alert resolves, the window expires after
+> `within` from the last observation.
+
+#### Example 1: re-firing alert rejoining its old incident
+
+Assume this configuration, where the custom rule groups by `node` while the
+default time-only strategy remains available at the same priority:
+
+```yaml
+rules:
+  - name: by-node
+    priority: 100
+    strategies:
+      - match:
+          allOf: [node]
+        within: 24h
+        from: start
+  - name: defaults
+    priority: 100
+    strategies:
+      - match: {}
+        within: 15m
+        from: start
+```
+
+Timeline of the scenario:
+
+1. **10:00** — Alerts A (`node=worker-1`) and B (`node=worker-1`) are firing
+   in incident **ID-1**. C (`node=worker-2`) is firing in incident **ID-2**.
+2. **11:00** — A resolves. ID-1 survives because B is still firing.
+3. **11:30** — The rules change: `by-node` is edited so that A's labels now
+   group with C's, that is, into ID-2. The reload runs while B is firing, so
+   ID-1 receives a regenerated temporal matcher with its reference reset to
+   11:30. ID-2 receives its own temporal matcher with the same reference.
+4. **11:40** — A re-fires. Under the new rules, A should join ID-2 through
+   the `by-node` selector. But ID-1's temporal matcher also accepts A:
+   11:40 − 11:30 = 10 minutes, within the 15-minute window, and no label
+   check applies. A is now a candidate of both incidents, and the winner is
+   decided by [candidate ranking](#ranking-eligible-candidates), not by
+   which grouping the new rules intended.
+
+```text
+Time             10:00        11:00   11:30   11:40              11:45
+                 |           |       |       |                 |
+A (worker-1)     [==========]         .       [=========         |
+B (worker-1)     [=========================================================]
+C (worker-2)     [=========================================================]
+                                     ^       x
+                                     |       A re-fires 10m after the
+                                     |       reload: inside ID-1's
+                                     |       regenerated 15m window
+                                     reload resets temporal
+                                     matcher references
+```
+
+At equal priority (`100` for both rules), the tie between ID-1's temporal
+matcher and ID-2's `by-node` matcher is broken by rule name, strategy order,
+then temporal distance — see the ranking discussion below.
+
+#### Example 2: absorbing an unrelated new alert
+
+The same regenerated window captures alerts that were never part of ID-1.
+Continuing from Example 1, suppose alert D (`node=worker-3`, no relation to
+ID-1) starts firing at 11:38. If no other candidate outranks ID-1's temporal
+matcher, D joins ID-1. With only the rules above, D has no `by-node` matcher
+to claim it (no incident for `worker-3` exists yet), so the temporal matcher
+of whichever incident has the most recent reference wins, and ID-1 — still
+extended by B's firing — is a strong candidate.
+
+This is the same temporal-joining behavior a fresh incident exhibits in
+normal processing; the reload only re-anchors an existing incident's window
+under rules that no longer define that grouping.
+
+#### Example 3: natural expiry of the window
+
+The absorbing window is not permanent. It survives only while the incident
+keeps firing alerts, because each observation moves the reference time
+forward. Once **all** of an incident's alerts resolve, the reference stops
+moving and the window expires `within` after the last observation:
+
+1. ID-1's last alert B resolves at 14:00. The temporal matcher's reference
+   stops at 14:00 (its last update).
+2. With `within: 15m`, any alert starting after 14:15 can no longer join
+   ID-1 through that matcher.
+3. If A re-fires at 15:00, no temporal matcher captures it; the new rules
+   apply and A joins ID-2, as intended.
+
+Note that matcher state is retained in memory beyond the matching window
+(see [retention and pruning](#retention-and-pruning)); retention keeps the
+matcher eligible for pruning, while `within` alone decides whether an
+incoming alert can still match it.
+
+#### Ranking and predictability
+
+Two properties of [candidate ranking](#ranking-eligible-candidates) make
+the outcome of such contention less predictable:
+
+- A time-only matcher competes on equal footing with label-based matchers.
+  Only a strictly better `priority` (or a
+  [priority claim](#priority-claims-the-whole-grouping)) reliably makes the
+  label-based grouping win; at equal priority the rule name, strategy order,
+  and temporal distance decide. In Example 1, both rules ship at
+  `priority: 100`, so the winner is decided by rule name (`by-node` sorts
+  before `defaults`) — not by the semantic fact that one matcher checks
+  labels and the other does not.
+- When candidates tie on all criteria, the winner depends on internal
+  iteration order, which is not deterministic. A re-firing alert can join
+  either incident across otherwise identical runs. In Example 1, if both
+  temporal matchers of ID-1 and ID-2 had the same reference time, the winner
+  would effectively be random.
+
+#### Making reassignment predictable
+
+This behavior follows the processor's general principle of stability over
+reclassification: a rule change is not a request to move alerts between
+existing incidents. When predictable reassignment after a rule change is
+required, use one of these:
+
+| Remedy | Effect |
+|---|---|
+| Lower the new grouping's `priority` below the time-only strategies it must
+  override (for example `priority: 50` against the defaults' `100`). | The
+  label-based matcher strictly outranks the temporal matcher, and a
+  [priority claim](#priority-claims-the-whole-grouping) can veto the temporal
+  capture entirely, so the re-firing alert joins the new incident. |
+| Wait for natural expiry: let all alerts of the old incident resolve, then
+  wait out `within` (15 minutes with the default time-only strategy) before
+  the alert re-fires. | The temporal window of the old incident is no longer
+  eligible, so the new rules apply. |
+| Restart CHA instead of relying on live reload. | Reconstruction replays
+  history under the new rules; see
+  [restart and identity recovery](#restart-and-identity-recovery) for the
+  guarantees and limits of that path. |
+
+The first remedy is the only one that changes the outcome without waiting or
+restarting, but note it affects grouping globally, not only this scenario:
+a lower-priority time-only strategy also loses ties against the new rule
+elsewhere. Prefer adjusting priorities when the whole rule set is under your
+control, as with custom rules replacing the defaults.
+
+Source: `adoptRules` and `recordAssignments` in
+[processor.go](../pkg/processor/processor.go); `matches`, `bestMatch`, and
+`tryMatchIntervals` in [incidents.go](../pkg/processor/incidents.go).
 
 ## Restart and identity recovery
 
