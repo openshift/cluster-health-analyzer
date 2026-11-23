@@ -394,3 +394,30 @@ func TestWatchdogSafeguardSeparatesUnmatchedAlerts(t *testing.T) {
 		})
 	}
 }
+
+// A matcher selected from the same batch must be updated with the accepted
+// interval, so its temporal window (from:end) extends with the alert that
+// just joined: an alert arriving at the extended boundary keeps matching.
+func TestSameBatchMatchExtendsTemporalWindow(t *testing.T) {
+	rules := testRules(t, `{"strategies":[{"match":{},"within":"15m","from":"end"}]}`)
+	gc, err := NewGroupsCollection(rules)
+	require.NoError(t, err)
+	start := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	mt := func(d time.Duration) model.Time { return model.TimeFromUnixNano(start.Add(d).UnixNano()) }
+
+	// Two alerts starting together in one batch: one ends immediately, the
+	// other lasts an hour. They share an incident.
+	short := Interval{Metric: model.LabelSet{"alertname": "Short"}, Start: mt(0), End: mt(0)}
+	long := Interval{Metric: model.LabelSet{"alertname": "Long"}, Start: mt(0), End: mt(time.Hour)}
+	grouped := gc.ProcessIntervalsBatch([]Interval{short, long})
+	require.Equal(t, grouped[0].GroupMatcher.RootGroupID, grouped[1].GroupMatcher.RootGroupID,
+		"alerts starting together must share an incident")
+	id := grouped[0].GroupMatcher.RootGroupID
+
+	// An alert starting exactly when the long one ends must join the same
+	// incident: the temporal window extends to the incident's new end.
+	boundary := Interval{Metric: model.LabelSet{"alertname": "Boundary"}, Start: mt(time.Hour), End: mt(time.Hour)}
+	grouped = gc.ProcessIntervalsBatch([]Interval{boundary})
+	require.Equal(t, id, grouped[0].GroupMatcher.RootGroupID,
+		"an alert arriving at the incident's extended end must join it")
+}

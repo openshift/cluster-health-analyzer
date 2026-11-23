@@ -412,13 +412,16 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 		if iGroupMatcher == nil {
 			iGroupMatcher = newGc.newRootGroup(i, isWatchdogGroup)
 		}
+		// A same-batch match must extend the selected matcher's window just
+		// like a cross-batch match in tryMatchIntervals does; label-matcher
+		// expansion below is independent of keeping the timeline current.
+		iGroupMatcher.update(i)
 
 		if iGroupMatcher.expandsMatchers() {
 			matchers := gc.rules.alertGroupMatchers(i)
 			for _, g := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
 				if iGroupMatcher.isSubsetOf(g) {
 					iGroupMatcher.expandMatchers(g.Matchers)
-					iGroupMatcher.update(i)
 				} else {
 					g.RootGroupID = iGroupMatcher.RootGroupID
 					// A batch may regenerate a matcher an existing group already
