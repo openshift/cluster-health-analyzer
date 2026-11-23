@@ -196,6 +196,18 @@ type match struct {
 	TimeDist     time.Duration
 }
 
+// referenceTime is the anchor the retention window is measured against.
+//
+// "end" strategy: the window slides with every new alert — the anchor is the
+// last time the group fired (g.End), so a steady stream of matching alerts
+// keeps the incident alive indefinitely.
+//
+// "start" strategy: the anchor is the Modified timestamp, which update()
+// advances to the Start of each new incoming alert. Because alert start times
+// typically reset with each firing cycle (for: + resolved gaps), the window is
+// effectively measured from when the *newest* firing began, not from when the
+// alert last fired. This makes "start" expire incidents sooner: an alert that
+// has been firing for hours contributes only its start time, not its end.
 func (g *GroupMatcher) referenceTime() model.Time {
 	if g.strategy.From == windowFromEnd {
 		return g.End
@@ -221,13 +233,32 @@ func watchdogAlert(i Interval) bool {
 
 // GroupsCollection requires NewGroupsCollection; matcher definitions have no implicit defaults.
 type GroupsCollection struct {
+	// Groups is the shared registry of matchers of ALL live
+	// incidents, from every incident mixed together: an incident is not an
+	// object but the set of matchers sharing its RootGroupID. bestMatch
+	// searches across all of them to decide which incident an alert joins.
 	Groups []*GroupMatcher
-	rules  *RulesSnapshot
+
+	// rules is the rule snapshot this collection was built with; loadAlerts
+	// compares it by pointer against the watcher's current snapshot to detect
+	// when the rules changed and adoptRules must run.
+	rules *RulesSnapshot
 
 	// assignments holds alert-to-incident assignments recovered from
-	// history. An alert matching an assignment keeps its incident even when
-	// the current rules would group it differently.
+	// history (restart recovery) or preserved across a rules reload
+	// (adoptRules). An alert matching an assignment keeps its incident even
+	// when the current rules would group it differently: the assignment is
+	// immutable and takes precedence over rule evaluation. This is plain
+	// data only; the live root matcher is materialized lazily in forcedRoots.
 	assignments []*historicalAssignment
+
+	// forcedRoots holds the materialized root matchers of incidents with
+	// externally imposed identity, keyed by incident ID. It is written by
+	// forcedRoot (lazily, on the first appearance of an assigned alert in a
+	// batch, when the real interval is known) and by adoptRules (eagerly, so
+	// the lazy path neither duplicates temporal matchers nor leaves the
+	// incident without the relabeling shield). Entries exempt an incident
+	// from UUID relabeling in UpdateGroupUUIDs.
 	forcedRoots map[string]*GroupMatcher
 }
 
@@ -529,8 +560,13 @@ func (gc *GroupsCollection) forcedAssignment(i Interval) *GroupMatcher {
 	return nil
 }
 
+// TODO: rename to materializeForcedRoot (or similar): the current name describes
+// the input, not the operation, and collides with the forcedRoots field. The
+// method is a cache lookup + lazy root creation + temporal matcher addition.
 // forcedRoot returns the shared root matcher for a recovered incident ID,
-// creating it (with its temporal matchers) on first use.
+// creating it on first use. The Watchdog safeguard applies here too: a
+// recovered Watchdog incident gets no temporal matchers, same as
+// newRootGroup for fresh incidents.
 func (gc *GroupsCollection) forcedRoot(id string, i Interval) *GroupMatcher {
 	if root, ok := gc.forcedRoots[id]; ok {
 		return root
@@ -544,9 +580,11 @@ func (gc *GroupsCollection) forcedRoot(id string, i Interval) *GroupMatcher {
 		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
 	}
 	gc.forcedRoots[id] = root
-	matchers := gc.rules.rootGroupMatchers(i, id)
-	for _, m := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
-		gc.AddGroup(m)
+	if !watchdogAlert(i) {
+		matchers := gc.rules.rootGroupMatchers(i, id)
+		for _, m := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
+			gc.AddGroup(m)
+		}
 	}
 	return root
 }

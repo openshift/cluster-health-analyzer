@@ -524,6 +524,111 @@ func TestAdoptRulesFiltersTemporalMatchersByClaim(t *testing.T) {
 	require.NotEqual(t, id, string(got[0]["group_id"]), "unclaimed alert must not join the claimed incident")
 }
 
+// The Watchdog safeguard holds through the batch following a rules reload:
+// adoptRules registers the recovered root, and the lazy materialization in
+// forcedRoot must not add temporal matchers to the Watchdog incident.
+func TestAdoptRulesKeepsWatchdogSafeguardThroughNextBatch(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	loader := mocks.NewMockPrometheusLoader(ctrl)
+	am := mocks.NewMockAlertManagerLoader(ctrl)
+	original := newTestGroupsCollection(t)
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	assigned := original.ProcessAlertsBatch([]model.LabelSet{
+		{"alertname": "Watchdog", "namespace": "openshift-monitoring"},
+	}, now.Add(-time.Hour))
+	id := string(assigned[0]["group_id"])
+	require.NotEmpty(t, id)
+	// A time-only strategy is the most aggressive one: without the safeguard
+	// any alert in the window would join the Watchdog incident.
+	replacement := testRules(t, `{"strategies":[{"match":{},"within":"24h","from":"start"}]}`)
+	p := &processor{
+		loader: loader, amLoader: am, groupsCollection: original,
+		rulesSource: func() *RulesSnapshot { return replacement },
+		assignedAlerts: []model.LabelSet{
+			{"alertname": "Watchdog", "namespace": "openshift-monitoring", "group_id": model.LabelValue(id)},
+		},
+	}
+	watchdog := model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}
+	unrelated := model.LabelSet{"alertname": "NodeDown", "namespace": "om", "node": "n1"}
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now).Return([]model.LabelSet{watchdog, maps.Clone(unrelated)}, nil)
+	am.EXPECT().SilencedAlerts().Return(nil, nil)
+	got, err := p.loadAlerts(context.Background(), now)
+	require.NoError(t, err)
+	byName := map[string]string{}
+	for _, alert := range got {
+		byName[string(alert["alertname"])] = string(alert["group_id"])
+	}
+	require.Equal(t, id, byName["Watchdog"], "Watchdog must keep its incident")
+	require.NotEqual(t, id, byName["NodeDown"], "unrelated alert must not join the Watchdog incident")
+	for _, g := range p.groupsCollection.Groups {
+		if g.RootGroupID != id {
+			continue
+		}
+		require.NotEmpty(t, g.strategy.operator, "Watchdog incident must have no time-only matcher")
+	}
+}
+
+// A recovered assignment must not create duplicate temporal matchers: after
+// a reload the incident's temporal matchers exist once in adoptRules, and
+// the lazy materialization must reuse the registered root instead of adding
+// them again.
+func TestAdoptRulesDoesNotDuplicateTemporalMatchers(t *testing.T) {
+	rules := testRules(t, `{"strategies":[{"match":{},"within":"15m","from":"start"}]}`)
+	gc, err := NewGroupsCollection(rules)
+	require.NoError(t, err)
+	start := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	labels := model.LabelSet{"alertname": "NodeDown", "namespace": "om"}
+	assigned := gc.ProcessAlertsBatch([]model.LabelSet{maps.Clone(labels)}, start)
+	id := string(assigned[0]["group_id"])
+	require.NotEmpty(t, id)
+
+	p := &processor{
+		groupsCollection: gc,
+		assignedAlerts: []model.LabelSet{
+			func() model.LabelSet { l := maps.Clone(labels); l["group_id"] = model.LabelValue(id); return l }(),
+		},
+	}
+	require.NoError(t, p.adoptRules(rules, start))
+	// The assigned alert fires again in the next batch, triggering the lazy
+	// root materialization.
+	p.groupsCollection.ProcessAlertsBatch([]model.LabelSet{maps.Clone(labels)}, start.Add(time.Minute))
+	temporal := 0
+	for _, g := range p.groupsCollection.Groups {
+		if g.RootGroupID == id && g.strategy != nil && g.strategy.operator == "" {
+			temporal++
+		}
+	}
+	require.Equal(t, 1, temporal, "incident must keep exactly one temporal matcher")
+}
+
+// Restart recovery: an alert with a recovered assignment pointing at a
+// Watchdog incident must not grow temporal matchers when it materializes
+// its root.
+func TestForcedRootKeepsWatchdogSafeguardOnRecovery(t *testing.T) {
+	rules := testRules(t, `{"strategies":[{"match":{},"within":"24h","from":"start"}]}`)
+	gc, err := NewGroupsCollection(rules)
+	require.NoError(t, err)
+	start := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	watchdog := model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}
+	unrelated := model.LabelSet{"alertname": "NodeDown", "namespace": "om", "node": "n1"}
+	gc.assignments = []*historicalAssignment{
+		{labels: maps.Clone(watchdog), start: model.TimeFromUnixNano(start.Add(-time.Hour).UnixNano()), end: model.TimeFromUnixNano(start.Add(-time.Minute).UnixNano()), id: "recovered-watchdog"},
+	}
+	got := gc.ProcessAlertsBatch([]model.LabelSet{maps.Clone(watchdog), maps.Clone(unrelated)}, start)
+	byName := map[string]string{}
+	for _, alert := range got {
+		byName[string(alert["alertname"])] = string(alert["group_id"])
+	}
+	require.Equal(t, "recovered-watchdog", byName["Watchdog"], "recovered Watchdog must keep its incident ID")
+	require.NotEqual(t, "recovered-watchdog", byName["NodeDown"], "unrelated alert must not join the recovered Watchdog incident")
+	for _, g := range gc.Groups {
+		if g.RootGroupID != "recovered-watchdog" {
+			continue
+		}
+		require.NotEmpty(t, g.strategy.operator, "recovered Watchdog incident must have no time-only matcher")
+	}
+}
+
 // A higher-priority custom rule claims new alerts by labels: matchers from
 // lower-priority rules (for example the default namespace grouping of a
 // pre-existing incident) must not capture them, and their new incidents must

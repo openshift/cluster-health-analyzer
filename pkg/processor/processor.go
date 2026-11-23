@@ -92,10 +92,24 @@ func (p *processor) Start(ctx context.Context) {
 	go p.Run(ctx)
 }
 
-// initGroupsCollection initializes the groups collection by loading the alerts.
+// initGroupsCollection rebuilds the incident state after a restart, in
+// memory, before the processor starts polling. It runs in three phases on a
+// local collection that is only attached to the processor at the end, so a
+// failure leaves the processor with no partial state.
 //
-// The alerts are loaded for the given time range and step and prepares the structure
-// for assigning group-ids to the alerts.
+//  1. Recover unambiguous alert-to-incident assignments from history
+//     (correlateHistoricalAssignments): before the replay, so the replay
+//     preserves those identities instead of reclassifying the alerts under
+//     the current rules.
+//  2. Replay the historical alerts (processHistoricalAlerts): the same
+//     engine as the live loop regenerates incidents and matchers from
+//     scratch under the current rules. Alerts with a recovered assignment
+//     bypass rule evaluation and keep their old incident; everything else
+//     is grouped anew and gets fresh UUIDs.
+//  3. Reconcile UUIDs (UpdateGroupUUIDs): incidents rebuilt without a
+//     recovered assignment get renamed back to their pre-restart UUID when
+//     one of their matchers matches a previous incident, so group-ids stay
+//     stable across restarts wherever possible.
 func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Time, step time.Duration) error {
 	slog.Info("Initializing groups collection", "start", start, "end", end, "step", step)
 	if p.rulesSource == nil {
@@ -114,6 +128,9 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	slog.Info("Loaded alerts range", "len", len(alertsRange))
 
 	slog.Info("Loading health map range")
+	// The health map range carries the group-ids CHA itself exported before
+	// the restart: it is the only surviving record of previous incident UUIDs,
+	// used both for assignment recovery and for the UUID reconciliation below.
 	healthMapRV, err := p.loader.LoadVectorRange(ctx, ClusterHealthComponentsMap, start, end, step)
 	if err != nil {
 		return err
@@ -126,10 +143,16 @@ func (p *processor) InitGroupsCollection(ctx context.Context, start, end time.Ti
 	groups.assignments = correlateHistoricalAssignments(alertsRange, healthMapRV)
 	slog.Info("Recovered historical assignments", "count", len(groups.assignments))
 
-	// Warm up the groups collection with historical alerts.
+	// Warm up the groups collection with historical alerts: replay the
+	// lookback window through the live grouping engine so temporal windows
+	// and matchers are current when the first live poll runs. Matchers are
+	// not restored: they are regenerated from the current rules.
 	slog.Info("Processing historical alerts")
 	groups.processHistoricalAlerts(alertsRange)
 
+	// Reconcile the UUIDs of incidents rebuilt by the replay (those without a
+	// recovered assignment) with the pre-restart incident IDs from the health
+	// map, so consumers see stable group-ids across restarts.
 	slog.Info("Updating group-ids")
 	groups.UpdateGroupUUIDs(healthMapRV)
 	p.stateMu.Lock()
@@ -243,6 +266,18 @@ func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 				watchdog = true
 				break
 			}
+		}
+		// Register the incident root now: without it, forcedRoot's lazy
+		// creation on the next batch would duplicate the temporal matchers
+		// added below (for non-Watchdog incidents) and leave the incident
+		// without the UpdateGroupUUIDs relabeling shield until then.
+		if groups.forcedRoots == nil {
+			groups.forcedRoots = make(map[string]*GroupMatcher)
+		}
+		groups.forcedRoots[id] = &GroupMatcher{
+			GroupID:         id,
+			RootGroupID:     id,
+			matcherTimeline: &matcherTimeline{Start: mt, Modified: mt, End: mt},
 		}
 		for i, labels := range alerts {
 			// Per-alert forced assignments keep each firing alert on its
