@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"testing"
 	"time"
@@ -455,7 +456,7 @@ func TestAdoptRulesKeepsWatchdogSafeguard(t *testing.T) {
 	replacement := testRules(t, `{"strategies":[{"match":{"exact":true},"within":"24h","from":"end"},{"match":{},"within":"15m","from":"start"}]}`)
 	p := &processor{
 		groupsCollection: original,
-		rulesSource:     func() *RulesSnapshot { return replacement },
+		rulesSource:      func() *RulesSnapshot { return replacement },
 		assignedAlerts: []model.LabelSet{
 			{"alertname": "Watchdog", "namespace": "openshift-monitoring", "group_id": model.LabelValue(id)},
 		},
@@ -468,6 +469,59 @@ func TestAdoptRulesKeepsWatchdogSafeguard(t *testing.T) {
 		require.NotNil(t, g.strategy)
 		require.NotEmpty(t, g.strategy.operator, "Watchdog incident must have no time-only matcher")
 	}
+}
+
+// newPriorityRules builds a snapshot from multiple JSON rule specs, sorted
+// by priority.
+func newPriorityRules(t *testing.T, specs ...string) *RulesSnapshot {
+	t.Helper()
+	rules := make([]*parsedRule, 0, len(specs))
+	for i, spec := range specs {
+		spec, err := decodeRuleSpec([]byte(spec))
+		require.NoError(t, err)
+		rule, err := parseRule(fmt.Sprintf("rule-%d", i), spec)
+		require.NoError(t, err)
+		rules = append(rules, rule)
+	}
+	sortRules(rules)
+	return &RulesSnapshot{rules: rules}
+}
+
+// The priority claim filter holds across a rules reload: a claimed alert's
+// incident must not get temporal matchers from lower-priority rules that
+// could then capture unrelated alerts.
+func TestAdoptRulesFiltersTemporalMatchersByClaim(t *testing.T) {
+	rules := newPriorityRules(t,
+		`{"priority":0,"strategies":[{"match":{"allOf":["tenant"]},"within":"24h","from":"start"}]}`,
+		`{"priority":100,"strategies":[{"match":{},"within":"15m","from":"start"}]}`)
+	start := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	gc, err := NewGroupsCollection(rules)
+	require.NoError(t, err)
+	assigned := gc.ProcessAlertsBatch([]model.LabelSet{
+		{"alertname": "NodeError", "namespace": "om", "tenant": "t1"},
+	}, start)
+	id := string(assigned[0]["group_id"])
+	require.NotEmpty(t, id)
+
+	p := &processor{
+		groupsCollection: gc,
+		assignedAlerts: []model.LabelSet{
+			{"alertname": "NodeError", "namespace": "om", "tenant": "t1", "group_id": model.LabelValue(id)},
+		},
+	}
+	require.NoError(t, p.adoptRules(rules, start))
+	for _, g := range p.groupsCollection.Groups {
+		if g.RootGroupID != id {
+			continue
+		}
+		require.NotEmpty(t, g.strategy.operator, "claimed incident must not get a time-only matcher")
+	}
+	// An unclaimed alert arriving after the reload must not join the tenant
+	// incident through a lower-priority temporal matcher.
+	got := p.groupsCollection.ProcessAlertsBatch([]model.LabelSet{
+		{"alertname": "StorageError", "namespace": "om"},
+	}, start.Add(time.Minute))
+	require.NotEqual(t, id, string(got[0]["group_id"]), "unclaimed alert must not join the claimed incident")
 }
 
 // A higher-priority custom rule claims new alerts by labels: matchers from

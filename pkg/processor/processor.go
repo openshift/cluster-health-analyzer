@@ -259,8 +259,14 @@ func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 			}
 			if i == 0 && !watchdog {
 				// One temporal matcher per incident keeps time-based joining
-				// available under the new rules.
+				// available under the new rules, but only when no higher-
+				// priority label strategy claims the alert (same filter as
+				// newRootGroup).
+				claim, claimed := rules.claimingPriority(labels)
 				for _, m := range rules.rootGroupMatchers(interval, id) {
+					if claimed && m.strategy.Priority > claim {
+						continue
+					}
 					groups.AddGroup(m)
 				}
 			}
