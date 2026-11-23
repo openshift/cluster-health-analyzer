@@ -114,9 +114,13 @@ func (rw *RulesWatcher) Start(ctx context.Context) error {
 	}
 	rw.rebuild()
 	// The defaults ConfigMap must be valid for CHA to start; the custom one
-	// is optional.
-	if rw.loadRules(DefaultRulesConfigMapName) == nil {
-		return fmt.Errorf("no valid default IncidentRules in %s", DefaultRulesConfigMapName)
+	// is optional and only logged when invalid.
+	defaultRules, err := rw.loadRules(DefaultRulesConfigMapName)
+	if defaultRules == nil {
+		if err != nil {
+			return fmt.Errorf("invalid default IncidentRules in %s: %w", DefaultRulesConfigMapName, err)
+		}
+		return fmt.Errorf("missing default IncidentRules in %s", DefaultRulesConfigMapName)
 	}
 	if snapshot := rw.GetSnapshot(); snapshot == nil || len(snapshot.rules) == 0 {
 		return fmt.Errorf("no valid IncidentRules loaded")
@@ -135,8 +139,21 @@ func (rw *RulesWatcher) rebuild() {
 	defer rw.mu.Unlock()
 
 	var rules []*parsedRule
+	var invalidErr error
 	for _, name := range watchedConfigMaps() {
-		rules = append(rules, rw.loadRules(name)...)
+		parsed, err := rw.loadRules(name)
+		if err != nil && invalidErr == nil {
+			invalidErr = err
+		}
+		rules = append(rules, parsed...)
+	}
+	if invalidErr != nil && rw.snapshot != nil {
+		// A present-but-invalid ConfigMap must not silently drop the rules
+		// previously loaded from it: keep the last valid snapshot until a
+		// valid update arrives. At startup there is nothing to keep, so the
+		// remaining sources are used as-is.
+		slog.Error("Keeping last valid IncidentRules: a watched ConfigMap is invalid", "error", invalidErr)
+		return
 	}
 	if rules == nil {
 		// No ConfigMap yielded valid rules. Keep the last valid snapshot so
@@ -158,38 +175,39 @@ func (rw *RulesWatcher) rebuild() {
 }
 
 // loadRules reads one ConfigMap from the watcher's store and parses its
-// rules. A missing, incomplete or invalid ConfigMap is logged and yields no
-// rules; it does not invalidate rules loaded from the other ConfigMap.
-func (rw *RulesWatcher) loadRules(name string) []*parsedRule {
+// rules. An absent ConfigMap is not an error (the custom one may be
+// legitimately deleted): it yields no rules with a nil error. A present
+// but unreadable or invalid ConfigMap yields an error, so the caller can
+// keep the last valid snapshot instead of silently dropping its rules.
+func (rw *RulesWatcher) loadRules(name string) ([]*parsedRule, error) {
 	item, exists, err := rw.informers[name].GetStore().GetByKey(watchNamespace() + "/" + name)
 	if err != nil {
-		slog.Error("Cannot load incident rules", "configmap", name, "error", err)
-		return nil
+		return nil, fmt.Errorf("cannot read ConfigMap: %w", err)
 	}
 	if !exists {
 		// The custom ConfigMap is user-owned and may legitimately be absent.
-		return nil
+		return nil, nil
 	}
 	cm, ok := item.(*corev1.ConfigMap)
 	if !ok {
-		slog.Error("Cannot load incident rules: unexpected object type", "configmap", name)
-		return nil
+		return nil, fmt.Errorf("unexpected object type %T", item)
 	}
 	data, found := cm.Data[RulesConfigKey]
 	if !found {
-		slog.Error("Cannot load incident rules: missing key in config", "configmap", name, "key", RulesConfigKey)
-		return nil
+		return nil, fmt.Errorf("missing key %q in config", RulesConfigKey)
 	}
 	parsed, err := parseRulesConfig([]byte(data))
 	if err != nil {
-		slog.Error("Cannot load invalid incident rules", "configmap", name, "error", err)
-		return nil
+		return nil, fmt.Errorf("invalid rules: %w", err)
 	}
-	return parsed
+	return parsed, nil
 }
 
 // mergeRules keeps the last rule for each name, so a custom rule replaces a
 // default rule with the same name.
+// TODO: log an error/warning when a custom rule overrides a default rule with
+// the same name: the silent replacement is easy to mistake for a loading
+// failure, and the operator cannot tell the override is intentional.
 func mergeRules(rules []*parsedRule) []*parsedRule {
 	indexByName := make(map[string]int, len(rules))
 	merged := make([]*parsedRule, 0, len(rules))

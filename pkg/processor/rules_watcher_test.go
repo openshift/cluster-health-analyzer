@@ -59,7 +59,7 @@ func TestRulesWatcherStartRequiresValidRules(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, watcher.GetSnapshot().rules, 1)
 			} else {
-				require.ErrorContains(t, err, "no valid default IncidentRules")
+				require.ErrorContains(t, err, "default IncidentRules")
 			}
 		})
 	}
@@ -98,7 +98,7 @@ func TestRulesWatcherRebuildInvalidatesChangedDefinitions(t *testing.T) {
 	watcher.rebuild()
 	// Invalid updates are logged and ignored: the last valid snapshot stays.
 	require.Same(t, updated, watcher.GetSnapshot())
-	require.Contains(t, log.String(), "Cannot load invalid incident rules")
+	require.Contains(t, log.String(), "Keeping last valid IncidentRules")
 }
 
 func TestRulesWatcherObservesUpdatesAndDeletion(t *testing.T) {
@@ -196,6 +196,35 @@ func TestRulesWatcherIgnoresInvalidCustomRules(t *testing.T) {
 	require.Equal(t, "default", snapshot.rules[0].Name)
 }
 
+// Corrupting the custom ConfigMap while valid rules are loaded must keep
+// the last valid snapshot (defaults+custom), not silently drop the custom
+// rules. Deleting the ConfigMap is intentional and returns to defaults.
+func TestRulesWatcherKeepsCustomRulesOnInvalidUpdate(t *testing.T) {
+	defaults := testDefaultRulesConfigMap(t, "rules:\n- name: default\n  priority: 100\n  strategies:\n"+testNodeStrategy)
+	custom := testConfigMap(t, CustomRulesConfigMapName, testRulesYAML("custom", "  - match:\n      allOf: [tenant]\n    within: 24h\n    from: start\n"))
+	watcher, _ := testRulesWatcher(t, defaults, custom)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, watcher.Start(ctx))
+	valid := watcher.GetSnapshot()
+	require.Len(t, valid.rules, 2)
+
+	store := watcher.informers[CustomRulesConfigMapName].GetStore()
+	// A typo in the custom payload must not drop the custom rules.
+	invalid := testConfigMap(t, CustomRulesConfigMapName, testRulesYAML("custom", "  - match:\n      anyOf: []\n    within: 24h\n    from: start\n"))
+	require.NoError(t, store.Update(invalid))
+	watcher.rebuild()
+	require.Same(t, valid, watcher.GetSnapshot(), "invalid custom update must keep the last valid snapshot")
+
+	// Deleting the ConfigMap is an intentional removal: defaults only.
+	require.NoError(t, store.Delete(invalid))
+	watcher.rebuild()
+	updated := watcher.GetSnapshot()
+	require.NotSame(t, valid, updated)
+	require.Len(t, updated.rules, 1)
+	require.Equal(t, "default", updated.rules[0].Name)
+}
+
 func TestRulesWatcherStartRequiresDefaultRules(t *testing.T) {
 	// A valid custom ConfigMap alone does not satisfy startup.
 	custom := testConfigMap(t, CustomRulesConfigMapName, testRulesYAML("custom", testNodeStrategy))
@@ -203,5 +232,5 @@ func TestRulesWatcherStartRequiresDefaultRules(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := watcher.Start(ctx)
-	require.ErrorContains(t, err, "no valid default IncidentRules")
+	require.ErrorContains(t, err, "missing default IncidentRules")
 }

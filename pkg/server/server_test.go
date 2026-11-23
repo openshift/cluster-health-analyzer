@@ -58,7 +58,7 @@ func TestStartServerFailsBeforeServingWithoutRules(t *testing.T) {
 	require.NoError(t, clientcmd.WriteToFile(config, path))
 	server := &startupTestServer{}
 	err := StartServer(time.Minute, server, common.Options{Kubeconfig: path, DisableComponentsHealth: true})
-	require.ErrorContains(t, err, "no valid default IncidentRules")
+	require.ErrorContains(t, err, "default IncidentRules")
 	require.False(t, server.started)
 	require.False(t, server.handled)
 }
