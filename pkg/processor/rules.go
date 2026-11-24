@@ -2,7 +2,6 @@ package processor
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -176,14 +175,6 @@ type ruleConfig struct {
 	Name       string         `json:"name" yaml:"name"`
 	Priority   int32          `json:"priority,omitempty" yaml:"priority,omitempty"`
 	Strategies []StrategySpec `json:"strategies" yaml:"strategies"`
-}
-
-func decodeRuleSpec(data []byte) (IncidentRuleSpec, error) {
-	var spec IncidentRuleSpec
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	err := decoder.Decode(&spec)
-	return spec, err
 }
 
 // parseRulesConfig parses the `rules.yaml` payload of the analyzer ConfigMap

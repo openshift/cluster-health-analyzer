@@ -243,6 +243,9 @@ func (p *processor) recordAssignments(alerts []model.LabelSet) {
 // shortcut: assignments of alerts that resolved before the rules change are
 // not recovered on reload; a re-firing resolved alert can get a new incident
 // until restart-time identity recovery is improved.
+// adoptRules requires the caller to hold p.stateMu: it swaps the collection
+// and the recorded assignments atomically. Moving the lock inside would
+// deadlock, since loadAlerts already holds it across the whole batch.
 func (p *processor) adoptRules(rules *RulesSnapshot, t time.Time) error {
 	slog.Info("IncidentRules changed, adopting new rules without reclassifying incidents")
 	groups, err := NewGroupsCollection(rules)

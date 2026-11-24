@@ -1,6 +1,8 @@
 package processor
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +12,17 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 )
+
+// decodeRuleSpec decodes a JSON rule spec. It has no production callers:
+// production validation goes through the YAML path (parseRulesConfig with
+// KnownFields); this helper only feeds JSON specs to tests.
+func decodeRuleSpec(data []byte) (IncidentRuleSpec, error) {
+	var spec IncidentRuleSpec
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	err := decoder.Decode(&spec)
+	return spec, err
+}
 
 func testRules(t *testing.T, specJSON string) *RulesSnapshot {
 	t.Helper()

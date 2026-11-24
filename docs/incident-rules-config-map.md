@@ -45,10 +45,10 @@ exact fallback window of five days, now expressed as `within: 120h`.
 | Area | Behavior introduced by the feature |
 |---|---|
 | [Initial configuration](#startup) | Incident processing requires a valid ConfigMap at startup; there is no silent built-in fallback. |
-| [Custom rules](#configuration-format-and-deployment) | Configured rules replace the default strategy list rather than extending it. Default matching paths and fallback windows are not implicitly retained. |
+| [Custom rules](#configuration-format-and-deployment) | Custom rules merge with the defaults by name: a custom rule with the same `name` as a default rule replaces it, and the other default rules remain active. To replace the whole default strategy list, override each default rule by name. |
 | [Batch grouping](#rules-prevail-over-batching) | Alerts group only through rules, not merely because they arrived together. |
 | [Priority claiming](#priority-claims-the-whole-grouping) | A rule that claims an alert by labels owns its whole grouping: lower-priority rules can neither capture the alert nor attach doors to its incident. With only the default rules nothing changes. |
-| [Live configuration updates](#runtime) | Valid changes are adopted without restarting CHA. Invalid updates or ConfigMap deletion retain the last valid snapshot; a restart still requires valid configuration. |
+| [Live configuration updates](#runtime) | Valid changes are adopted without restarting CHA. Invalid updates retain the last valid snapshot; deleting the custom ConfigMap returns to the default rules. A restart still requires valid configuration. |
 | [Namespace](#namespace-selection) | Explicit environment override takes precedence over pod discovery and `default`. |
 | [Time windows](#validation-and-configuration-lifecycle) | Matching windows are configurable up to seven days; larger values are rejected. |
 | [History and pruning](#seven-day-horizon-and-pruning) | Startup queries seven days of history instead of four. Pruning uses each strategy's time reference to avoid discarding still-eligible matchers. |
@@ -182,10 +182,12 @@ custom one.
   rule set; ordering uses the existing `priority` and `name` tie-breakers.
 - A custom rule with the same `name` as a default rule **replaces** that
   default rule, so users can override shipped rules, not only add to them.
-- Each ConfigMap's payload is validated independently. A ConfigMap with an
-  invalid `rules.yaml` or a missing `rules.yaml` key is logged and ignored;
-  it does not invalidate the rest of the snapshot. The defaults ConfigMap must
-  still be valid for CHA to start.
+- Each ConfigMap's payload is validated independently. When a ConfigMap
+  with an invalid `rules.yaml` or a missing `rules.yaml` key appears while
+  valid rules are loaded, CHA keeps the last valid snapshot until a valid
+  update arrives; deleting a ConfigMap is intentional and takes effect
+  (the custom one returns the effective rules to the defaults). The defaults
+  ConfigMap must still be valid for CHA to start.
 - Creating, updating, or deleting the custom ConfigMap rebuilds and publishes
   a new snapshot, exactly like updates to the defaults ConfigMap today.
   Deleting the custom ConfigMap returns the effective rules to the defaults.
