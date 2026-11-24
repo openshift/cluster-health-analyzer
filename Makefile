@@ -11,6 +11,8 @@ YQ := $(or $(shell which yq 2>/dev/null),$(GOBIN)/yq)
 PROMTOOL := $(or $(shell which promtool 2>/dev/null),$(GOBIN)/promtool)
 GOVULNCHECK := $(GOBIN)/govulncheck
 MCPCHECKER_VERSION ?= 0.0.22
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
+DEV_IMAGE ?= quay.io/rh-ee-criolo/cluster-health-analyzer:incidents-2.0-dev
 MCPCHECKER_OS ?= $(shell uname -s | tr '[:upper:]' '[:lower:]')
 MCPCHECKER_ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
 MCPCHECKER := bin/mcpchecker
@@ -101,7 +103,17 @@ simulate:
 
 .PHONY: build
 build:
-	go build -o bin/cluster-health-analyzer .
+	go build -ldflags "-X github.com/openshift/cluster-health-analyzer/cmd.Version=$(VERSION)" -o bin/cluster-health-analyzer .
+
+## build-dev-image> build a dev image (testonly tag) with the /debug/incident-state endpoint
+.PHONY: build-dev-image
+build-dev-image:
+	podman build --build-arg BUILD_TAGS="strictfipsruntime,testonly" -t $(DEV_IMAGE) .
+
+## push-dev-image> push the dev image built by build-dev-image
+.PHONY: push-dev-image
+push-dev-image:
+	podman push $(DEV_IMAGE)
 
 # ----------------
 # Deploy

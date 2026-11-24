@@ -3,7 +3,7 @@ package processor
 import (
 	"fmt"
 	"log/slog"
-	"math"
+	"maps"
 	"slices"
 	"sort"
 	"time"
@@ -49,11 +49,6 @@ func (c Change) String() string {
 }
 
 type ChangeSet []Change
-
-var noMatchAlerts = []common.LabelsSubsetMatcher{
-	{Labels: model.LabelSet{"alertname": "Watchdog", "namespace": "openshift-monitoring"}},
-	{Labels: model.LabelSet{"alertname": "AlertmanagerReceiversNotConfigured", "namespace": "openshift-monitoring"}},
-}
 
 func MetricsIntervals(rangeVector prom.RangeVector) []Interval {
 	if len(rangeVector) == 0 {
@@ -136,24 +131,28 @@ func (ch ChangeSet) String() string {
 
 // Group Matchers
 
+type matcherTimeline struct {
+	Start    model.Time
+	Modified model.Time
+	End      model.Time
+}
+
 type GroupMatcher struct {
+	*matcherTimeline
 	GroupID     string
 	RootGroupID string
-	Start       model.Time
-	Modified    model.Time
-	End         model.Time
 
-	Distance float64
 	Matchers []common.LabelsSubsetMatcher
+	strategy *parsedStrategy
 }
 
 func (g GroupMatcher) String() string {
-	return fmt.Sprintf("GroupID: %s, RootGroupID: %s, Start: %s, Modified: %s, End: %s, Distance: %f, Matchers: %v",
-		g.GroupID, g.RootGroupID, g.Start.Time(), g.Modified.Time(), g.End.Time(), g.Distance, g.Matchers)
+	return fmt.Sprintf("GroupID: %s, RootGroupID: %s, Start: %s, Modified: %s, End: %s, Matchers: %v",
+		g.GroupID, g.RootGroupID, g.Start.Time(), g.Modified.Time(), g.End.Time(), g.Matchers)
 }
 
 func (g GroupMatcher) isSubsetOf(other *GroupMatcher) bool {
-	if g.Distance != other.Distance {
+	if g.strategy != other.strategy {
 		return false
 	}
 
@@ -197,20 +196,34 @@ type match struct {
 	TimeDist     time.Duration
 }
 
-func newGroupMatcherSubset(labels model.LabelSet, keys []model.LabelName, distance float64) *GroupMatcher {
-	labels = getMapSubset(labels, keys...)
-
-	return &GroupMatcher{
-		Matchers: []common.LabelsSubsetMatcher{{Labels: labels}},
-		Distance: distance,
+// referenceTime is the anchor the retention window is measured against.
+//
+// "end" strategy: the window slides with every new alert — the anchor is the
+// last time the group fired (g.End), so a steady stream of matching alerts
+// keeps the incident alive indefinitely.
+//
+// "start" strategy: the anchor is the Modified timestamp, which update()
+// advances to the Start of each new incoming alert. Because alert start times
+// typically reset with each firing cycle (for: + resolved gaps), the window is
+// effectively measured from when the *newest* firing began, not from when the
+// alert last fired. This makes "start" expire incidents sooner: an alert that
+// has been firing for hours contributes only its start time, not its end.
+func (g *GroupMatcher) referenceTime() model.Time {
+	if g.strategy.From == windowFromEnd {
+		return g.End
 	}
+	return g.Modified
 }
 
-func newGroupMatcherExact(labels model.LabelSet) *GroupMatcher {
-	return &GroupMatcher{
-		Matchers: []common.LabelsSubsetMatcher{{Labels: labels}},
-		Distance: 0,
+func (g *GroupMatcher) update(interval Interval) {
+	if g.strategy != nil && g.strategy.From == windowFromStart {
+		g.Modified = interval.Start
 	}
+	g.End = max(g.End, interval.End)
+}
+
+func (g *GroupMatcher) expandsMatchers() bool {
+	return g.strategy == nil || g.strategy.Expand
 }
 
 func watchdogAlert(i Interval) bool {
@@ -218,44 +231,35 @@ func watchdogAlert(i Interval) bool {
 		i.Metric["namespace"] == "openshift-monitoring"
 }
 
-func alertFuzzyLabels(i Interval) model.LabelSet {
-	for _, m := range noMatchAlerts {
-		// For certain alerts, we don't want to do any fuzzy matching.
-		if match, _ := m.Matches(i.Metric); match {
-			return nil
-		}
-	}
-	// TODO: add option for some alerts to match some known pairs, but not others.
-	// E.g. APIRemovedInNextReleaseInUse and APIRemovedInNextEUSReleaseInUse
-	return getMapSubset(i.Metric, "alertname", "namespace")
-}
-
-// alertGroupMatchers returns a list of matchers for the alert.
-// This includes exact matcher with 0 distance, as well as various fuzzy matchers
-// based on the alert labels.
-func alertGroupMatchers(interval Interval) []*GroupMatcher {
-	labels := interval.Metric
-	groups := []*GroupMatcher{
-		newGroupMatcherExact(labels),
-		// Match on main subset of labels - should be still close enough.
-		newGroupMatcherSubset(labels, []model.LabelName{"namespace", "alertname", "service", "job", "container"}, 1),
-	}
-
-	for k, v := range alertFuzzyLabels(interval) {
-		groups = append(groups,
-			newGroupMatcherSubset(model.LabelSet{k: v}, []model.LabelName{k}, 2),
-		)
-	}
-	for _, g := range groups {
-		g.Start = interval.Start
-		g.Modified = interval.Start
-		g.End = interval.End
-	}
-	return groups
-}
-
+// GroupsCollection requires NewGroupsCollection; matcher definitions have no implicit defaults.
 type GroupsCollection struct {
+	// Groups is the shared registry of matchers of ALL live
+	// incidents, from every incident mixed together: an incident is not an
+	// object but the set of matchers sharing its RootGroupID. bestMatch
+	// searches across all of them to decide which incident an alert joins.
 	Groups []*GroupMatcher
+
+	// rules is the rule snapshot this collection was built with; loadAlerts
+	// compares it by pointer against the watcher's current snapshot to detect
+	// when the rules changed and adoptRules must run.
+	rules *RulesSnapshot
+
+	// assignments holds alert-to-incident assignments recovered from
+	// history (restart recovery) or preserved across a rules reload
+	// (adoptRules). An alert matching an assignment keeps its incident even
+	// when the current rules would group it differently: the assignment is
+	// immutable and takes precedence over rule evaluation. This is plain
+	// data only; the live root matcher is materialized lazily in forcedRoots.
+	assignments []*historicalAssignment
+
+	// forcedRoots holds the materialized root matchers of incidents with
+	// externally imposed identity, keyed by incident ID. It is written by
+	// forcedRoot (lazily, on the first appearance of an assigned alert in a
+	// batch, when the real interval is known) and by adoptRules (eagerly, so
+	// the lazy path neither duplicates temporal matchers nor leaves the
+	// incident without the relabeling shield). Entries exempt an incident
+	// from UUID relabeling in UpdateGroupUUIDs.
+	forcedRoots map[string]*GroupMatcher
 }
 
 func (gc *GroupsCollection) AddGroup(g *GroupMatcher) {
@@ -308,45 +312,36 @@ func (gc *GroupsCollection) ProcessAlertsBatch(alerts []model.LabelSet, timestam
 	return ret
 }
 
-// PruneGroups removes groups that can't be matched anymore.
-//
-// It calculates the threshold based on the provided time and removes groups.
+// PruneGroups removes matchers whose retention since the strategy's
+// reference time has expired. Retention is measured from the reference time
+// (Modified for start-anchored, End for end-anchored strategies), so an
+// end-anchored matcher with a recent end survives even if its modified time
+// is old.
 func (gc *GroupsCollection) PruneGroups(t time.Time) {
-	// Directs matches have longer retention times.
-	gc.pruneGroupsBefore(0, 0, t.Add(-1*directMatchLongTimeDelta))
-	// Fuzzy matches have shorter retention times.
-	gc.pruneGroupsBefore(1, math.Inf(1), t.Add(-1*fuzzyMatchTimeDelta))
-}
-
-func (gc *GroupsCollection) pruneGroupsBefore(minDistance, maxDistance float64, t time.Time) {
 	mt := model.TimeFromUnixNano(t.UnixNano())
-
-	newGroups := make([]*GroupMatcher, 0, len(gc.Groups))
-
-	for _, g := range gc.Groups {
-		if g.Distance >= minDistance && g.Distance <= maxDistance && g.Modified.Before(mt) {
-			continue
-		}
-		newGroups = append(newGroups, g)
-	}
-	gc.Groups = newGroups
+	gc.Groups = slices.DeleteFunc(gc.Groups, func(g *GroupMatcher) bool {
+		return mt.Sub(g.referenceTime()) > g.strategy.Retention
+	})
 }
 
 func (gc *GroupsCollection) tryMatchIntervals(intervals []Interval) ([]GroupedInterval, []Interval) {
 	var ret []GroupedInterval
 	var unmatched []Interval
 	for _, i := range intervals {
-		matchedGroup := gc.bestMatch(i)
+		var matchedGroup *GroupMatcher
+		if root := gc.forcedAssignment(i); root != nil {
+			// A recovered historical assignment is immutable: it takes
+			// precedence over rule evaluation.
+			matchedGroup = root
+		} else {
+			matchedGroup = gc.bestMatch(i)
+		}
 		if matchedGroup == nil {
 			unmatched = append(unmatched, i)
 			continue
 		}
 
-		if matchedGroup.Distance > 0 {
-			// We don't update modified time for flapping alerts,
-			matchedGroup.Modified = i.Start
-		}
-		matchedGroup.End = max(matchedGroup.End, i.End)
+		matchedGroup.update(i)
 
 		newGroupedIntervals := gc.addIntervalsGroups([]Interval{i}, matchedGroup)
 		ret = append(ret, newGroupedIntervals...)
@@ -358,28 +353,41 @@ func (gc *GroupsCollection) newRootGroup(i Interval, inactive bool) *GroupMatche
 	rootGroupID := uuid.New().String()
 
 	ret := GroupMatcher{
-		GroupID:     rootGroupID,
-		RootGroupID: rootGroupID,
-		Start:       i.Start,
-		Modified:    i.Start,
-		End:         i.End,
-		Distance:    math.Inf(1),
+		GroupID:         rootGroupID,
+		RootGroupID:     rootGroupID,
+		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
 	}
-	if inactive {
-		// For inactive group, we set the modified to 0 so that it doesn't match
-		// any new alert.
-		ret.Modified = 0
+	if !inactive {
+		matchers := gc.rules.rootGroupMatchers(i, rootGroupID)
+		for _, matcher := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
+			gc.AddGroup(matcher)
+		}
 	}
-
-	gc.AddGroup(&ret)
 	return &ret
+}
+
+// equivalentGroup returns the existing matcher that covers the same
+// selectors and incident as g, or nil. Regenerated matchers can refresh it
+// instead of being added again on every batch.
+func (gc *GroupsCollection) equivalentGroup(g *GroupMatcher) *GroupMatcher {
+	for _, existing := range gc.Groups {
+		if existing.strategy != g.strategy || existing.RootGroupID != g.RootGroupID || len(existing.Matchers) != len(g.Matchers) {
+			continue
+		}
+		if slices.EqualFunc(existing.Matchers, g.Matchers, func(a, b common.LabelsSubsetMatcher) bool {
+			return a.Equals(b)
+		}) {
+			return existing
+		}
+	}
+	return nil
 }
 
 func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatcher *GroupMatcher) []GroupedInterval {
 	if len(intervals) == 0 {
 		return nil
 	}
-	newGc := &GroupsCollection{}
+	newGc := &GroupsCollection{rules: gc.rules}
 
 	isWatchdogGroup := false
 	for _, i := range intervals {
@@ -390,44 +398,39 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 	}
 
 	ret := make([]GroupedInterval, 0, len(intervals))
-	if groupMatcher == nil && !isWatchdogGroup {
-		// If not provided, create a new root group for all intervals in this batch.
-		// We don't do this if watchdog is present in the group, as it indicates
-		// the alerts are together by accident (perhaps due to a restart or data
-		// outage).
-		groupMatcher = newGc.newRootGroup(intervals[0], isWatchdogGroup)
-	}
-
 	for _, i := range intervals {
 		var iGroupMatcher *GroupMatcher
 		iGroupMatcher = groupMatcher
 
 		if iGroupMatcher == nil {
+			// Rules prevail over batching: each unmatched alert is evaluated
+			// on its own, including against candidates created earlier in
+			// this batch. Batch membership alone never groups alerts.
 			iGroupMatcher = newGc.bestMatch(i)
 		}
 
 		if iGroupMatcher == nil {
 			iGroupMatcher = newGc.newRootGroup(i, isWatchdogGroup)
 		}
+		// A same-batch match must extend the selected matcher's window just
+		// like a cross-batch match in tryMatchIntervals does; label-matcher
+		// expansion below is independent of keeping the timeline current.
+		iGroupMatcher.update(i)
 
-		// If we didn't have a direct match, add additional fuzzy matchers
-		// for this interval. If Distance is 0, we assume the fuzzy matchers
-		// to be already present.
-		if iGroupMatcher.Distance > 0 {
-			newGroupCands := alertGroupMatchers(i)
-			for _, g := range newGroupCands {
-				if g.Distance == iGroupMatcher.Distance && iGroupMatcher.isSubsetOf(g) {
+		if iGroupMatcher.expandsMatchers() {
+			matchers := gc.rules.alertGroupMatchers(i)
+			for _, g := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
+				if iGroupMatcher.isSubsetOf(g) {
 					iGroupMatcher.expandMatchers(g.Matchers)
-					if g.Distance > 0 {
-						// We don't update modified time for flapping alerts,
-						// as we don't consider that being a significant change
-						// for the group.
-						iGroupMatcher.Modified = i.Start
-					}
-					iGroupMatcher.End = max(iGroupMatcher.End, i.End)
 				} else {
 					g.RootGroupID = iGroupMatcher.RootGroupID
-					newGc.AddGroup(g)
+					// A batch may regenerate a matcher an existing group already
+					// covers: refresh that group instead of adding a duplicate.
+					if existing := gc.equivalentGroup(g); existing != nil {
+						existing.update(i)
+					} else {
+						newGc.AddGroup(g)
+					}
 				}
 			}
 		}
@@ -440,97 +443,52 @@ func (gc *GroupsCollection) addIntervalsGroups(intervals []Interval, groupMatche
 	return ret
 }
 
-var (
-	// Unless we have a direct match, we try fuzzy matching.
-	fuzzyMatchTimeDelta = 24 * time.Hour
-
-	// If we have no match yet, we try to match on the time, but just very close events.
-	timeMatchTimeDelta = 15 * time.Minute
-
-	// No match yet: look for direct matches deeper in the past.
-	directMatchLongTimeDelta = 5 * 24 * time.Hour
-)
-
 func (gc *GroupsCollection) bestMatch(interval Interval) *GroupMatcher {
 	matches := gc.matches(interval)
-	var directLongMatch *match
-	var shortCandidates []match
-	var shortMatch *match
-	sort.Slice(matches, func(i, j int) bool {
+	if len(matches) == 0 {
+		return nil
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		a, b := matches[i].GroupMatcher.strategy, matches[j].GroupMatcher.strategy
+		if a.Priority != b.Priority {
+			return a.Priority < b.Priority
+		}
+		if a.RuleName != b.RuleName {
+			return a.RuleName < b.RuleName
+		}
+		if a.Order != b.Order {
+			return a.Order < b.Order
+		}
 		return matches[i].TimeDist < matches[j].TimeDist
 	})
-
-	for _, m := range matches {
-		if m.TimeDist <= fuzzyMatchTimeDelta {
-			shortCandidates = append(shortCandidates, m)
-			continue
-		}
-
-		if m.TimeDist <= directMatchLongTimeDelta && m.GroupMatcher.Distance == 0 {
-			directLongMatch = &m
-			// Given matches are sorted by time and we crossed the fuzzyMatchTimeDelta,
-			// there is no change to match anything better at this point.
-			break
-		}
+	winner := matches[0].GroupMatcher
+	if claim, ok := gc.rules.claimingPriority(interval.Metric); ok && winner.strategy.Priority > claim {
+		// A higher-priority rule claims this alert by labels: matchers from
+		// lower-priority rules must not capture it, so it starts a new
+		// incident under the claiming rule instead.
+		return nil
 	}
-
-	if len(shortCandidates) > 0 {
-		// Try to find the match with the smallest distance.
-		// In case of the same distance, it's fine for the first match to win,
-		// as we sort the matches by time initially.
-		shortMatch = &shortCandidates[0]
-		for i := 1; i < len(shortCandidates); i++ {
-			if shortCandidates[i].GroupMatcher.Distance < shortMatch.GroupMatcher.Distance {
-				shortMatch = &shortCandidates[i]
-			}
-		}
-	}
-
-	if shortMatch != nil {
-		return shortMatch.GroupMatcher
-	}
-	if directLongMatch != nil {
-		return directLongMatch.GroupMatcher
-	}
-
-	return nil
+	return winner
 }
 
 func (gc *GroupsCollection) matches(interval Interval) []match {
 	var ret []match
-	allLabels := interval.Metric
-	fuzzyLabels := alertFuzzyLabels(interval)
 	for _, g := range gc.Groups {
-		var timeDist time.Duration
-		if g.Distance == 0 {
-			// for direct matches, we compare with the end of the interval
-			timeDist = interval.Start.Sub(g.End)
-		} else {
-			// In fuzzy matching, we compare with the last time the group was modified.
-			timeDist = interval.Start.Sub(g.Modified)
-		}
-
 		if interval.Start < g.Start {
-			// We don't consider groups from the future
 			continue
 		}
-
-		// Pure time-based grouping
-		if g.Distance == math.Inf(1) && timeDist <= timeMatchTimeDelta {
+		timeDist := interval.Start.Sub(g.referenceTime())
+		if timeDist > g.strategy.Within || !g.strategy.allows(interval.Metric) {
+			continue
+		}
+		// A matcher without label selectors accepts any alert within its window.
+		if len(g.Matchers) == 0 {
 			ret = append(ret, match{g, timeDist})
 			continue
 		}
-
-		labels := allLabels
-		// For fuzzy matching, we use only a subset of labels that can be overriden
-		// on per-alert basis.
-		if g.Distance >= 2 {
-			labels = fuzzyLabels
-		}
-		for _, m := range g.Matchers {
-			if matched, _ := m.Matches(labels); matched {
+		for _, matcher := range g.Matchers {
+			if matched, _ := matcher.Matches(interval.Metric); matched {
 				ret = append(ret, match{g, timeDist})
-				// We found a match for this group: no need to check other matchers.
 				break
 			}
 		}
@@ -543,6 +501,96 @@ func (gc *GroupsCollection) matches(interval Interval) []match {
 /// The previous incidents matcher is used to match the current groups
 /// with the previous incidents. This allows preserving the group UUIDs
 /// after the restart of the analyzer.
+
+// historicalAssignment records an unambiguous alert-to-incident assignment
+// recovered from history: an alert with these labels, observed within this
+// time range, belonged to the incident with this ID.
+type historicalAssignment struct {
+	labels model.LabelSet
+	start  model.Time
+	end    model.Time
+	id     string
+}
+
+// correlateHistoricalAssignments recovers alert-to-incident assignments by
+// correlating the complete labels of historical alerts with the exported
+// incident mappings. The mappings retain only a projection of the alert
+// labels, so an alert is assigned only when the evidence is unambiguous:
+// when several incidents match the same labels and time range, the alert is
+// left to the regular rules instead of receiving an arbitrary ID.
+func correlateHistoricalAssignments(alertsRange, healthMapRV prom.RangeVector) []*historicalAssignment {
+	if len(healthMapRV) == 0 {
+		return nil
+	}
+	prevIncidents := newPreviousIncidentsMatcher(healthMapRV)
+	var assignments []*historicalAssignment
+	for _, interval := range MetricsIntervals(alertsRange) {
+		ids := make(map[string]struct{})
+		for _, candidate := range prevIncidents.atTime(interval.End) {
+			if matched, _ := candidate.matcher.Matches(interval.Metric); matched {
+				ids[candidate.uuid] = struct{}{}
+			}
+		}
+		if len(ids) != 1 {
+			continue
+		}
+		for id := range ids {
+			assignments = append(assignments, &historicalAssignment{
+				labels: interval.Metric, start: interval.Start, end: interval.End, id: id,
+			})
+		}
+	}
+	return assignments
+}
+
+// forcedAssignment returns the root matcher of the incident an alert was
+// historically assigned to, or nil when no recovered assignment covers the
+// interval.
+func (gc *GroupsCollection) forcedAssignment(i Interval) *GroupMatcher {
+	for _, a := range gc.assignments {
+		if !maps.Equal(a.labels, i.Metric) {
+			continue
+		}
+		if i.Start < a.start.Add(-previousIncidentsTolerance) || i.Start > a.end.Add(previousIncidentsTolerance) {
+			continue
+		}
+		// Extend the covered interval so a firing alert keeps its assignment
+		// beyond the initial tolerance window; it expires after the alert
+		// stops firing.
+		a.end = max(a.end, i.End)
+		return gc.forcedRoot(a.id, i)
+	}
+	return nil
+}
+
+// TODO: rename to materializeForcedRoot (or similar): the current name describes
+// the input, not the operation, and collides with the forcedRoots field. The
+// method is a cache lookup + lazy root creation + temporal matcher addition.
+// forcedRoot returns the shared root matcher for a recovered incident ID,
+// creating it on first use. The Watchdog safeguard applies here too: a
+// recovered Watchdog incident gets no temporal matchers, same as
+// newRootGroup for fresh incidents.
+func (gc *GroupsCollection) forcedRoot(id string, i Interval) *GroupMatcher {
+	if root, ok := gc.forcedRoots[id]; ok {
+		return root
+	}
+	if gc.forcedRoots == nil {
+		gc.forcedRoots = make(map[string]*GroupMatcher)
+	}
+	root := &GroupMatcher{
+		GroupID:         id,
+		RootGroupID:     id,
+		matcherTimeline: &matcherTimeline{Start: i.Start, Modified: i.Start, End: i.End},
+	}
+	gc.forcedRoots[id] = root
+	if !watchdogAlert(i) {
+		matchers := gc.rules.rootGroupMatchers(i, id)
+		for _, m := range gc.rules.filterClaimedMatchers(i.Metric, matchers) {
+			gc.AddGroup(m)
+		}
+	}
+	return root
+}
 
 type previousIncident struct {
 	matcher *common.LabelsSubsetMatcher
@@ -638,6 +686,11 @@ func (gc *GroupsCollection) UpdateGroupUUIDs(healthMapRV prom.RangeVector) {
 	prevIncidentsMatcher := newPreviousIncidentsMatcher(healthMapRV)
 
 	for _, g := range gc.Groups {
+		// Groups with a recovered assignment already carry their authoritative
+		// ID and must not be relabeled by matcher overlap.
+		if _, forced := gc.forcedRoots[g.RootGroupID]; forced {
+			continue
+		}
 		// Check if the group is still unmapped.
 		if _, ok := unmappedGroups[g.RootGroupID]; !ok {
 			continue
