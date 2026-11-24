@@ -355,7 +355,12 @@ func (p *processor) loadAlerts(ctx context.Context, t time.Time) ([]model.LabelS
 			return nil, fmt.Errorf("no valid IncidentRules loaded")
 		}
 		p.stateMu.Lock()
-		adopt := p.groupsCollection != nil && p.groupsCollection.rules != rules
+		// Adoption rebuilds the collection from the recorded assignments of
+		// the PREVIOUS batch. After initialization that memo is still empty:
+		// adopting there would erase the recovered identities. Delay adoption
+		// by one cycle until recordAssignments has run at least once.
+		adopt := p.groupsCollection != nil && p.groupsCollection.rules != rules &&
+			len(p.assignedAlerts) > 0
 		if adopt {
 			if err := p.adoptRules(rules, t); err != nil {
 				p.stateMu.Unlock()

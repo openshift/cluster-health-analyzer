@@ -682,6 +682,56 @@ func TestRulePriorityClaimsNewAlertsOverLowerPriorityMatchers(t *testing.T) {
 	require.NotEqual(t, t2, high, "excluded alert must not join the t2 incident")
 }
 
+// A rules update published while InitGroupsCollection runs must not erase
+// the recovered identities: adoption is delayed until the first live batch
+// has recorded the current assignments.
+func TestFirstPollKeepsRecoveredAssignmentsWhenRulesChangedDuringInit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	loader := mocks.NewMockPrometheusLoader(ctrl)
+	am := mocks.NewMockAlertManagerLoader(ctrl)
+	snapshotA := testRules(t, `{"strategies":[{"match":{"allOf":["node"]},"within":"24h","from":"start"}]}`)
+	snapshotB := testRules(t, `{"strategies":[{"match":{"allOf":["tenant"]},"within":"24h","from":"start"}]}`)
+	// An initialized collection with a recovered assignment, built under
+	// snapshot A; the memo is empty, as after InitGroupsCollection.
+	gc, err := NewGroupsCollection(snapshotA)
+	require.NoError(t, err)
+	now := time.Date(2024, 7, 1, 12, 0, 0, 0, time.UTC)
+	recovered := model.LabelSet{"alertname": "NodeDown", "node": "n1"}
+	gc.assignments = []*historicalAssignment{
+		{labels: maps.Clone(recovered), start: model.TimeFromUnixNano(now.Add(-time.Hour).UnixNano()), end: model.TimeFromUnixNano(now.Add(-time.Minute).UnixNano()), id: "recovered-1"},
+	}
+	p := &processor{
+		loader: loader, amLoader: am, groupsCollection: gc,
+		rulesSource: func() *RulesSnapshot { return snapshotB },
+	}
+
+	// First live poll: the watcher already published snapshot B during init.
+	// The recovered alert must keep its identity, processed under snapshot A.
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now).Return([]model.LabelSet{maps.Clone(recovered)}, nil)
+	am.EXPECT().SilencedAlerts().Return(nil, nil)
+	got, err := p.loadAlerts(context.Background(), now)
+	require.NoError(t, err)
+	require.Equal(t, "recovered-1", string(got[0]["group_id"]),
+		"first poll must keep the recovered identity instead of adopting pending rules with an empty memo")
+	require.Same(t, gc, p.groupsCollection, "adoption must be delayed by one cycle")
+	require.Len(t, p.assignedAlerts, 1, "first poll must record the current assignments")
+
+	// Second poll: adoption happens with the recorded memo. The recovered
+	// alert keeps its incident, and a new alert is grouped under snapshot B.
+	newcomer := model.LabelSet{"alertname": "StorageError", "node": "n1", "tenant": "t1"}
+	loader.EXPECT().LoadQuery(gomock.Any(), `ALERTS{alertstate="firing"}`, now.Add(time.Minute)).Return([]model.LabelSet{maps.Clone(recovered), maps.Clone(newcomer)}, nil)
+	am.EXPECT().SilencedAlerts().Return(nil, nil)
+	got, err = p.loadAlerts(context.Background(), now.Add(time.Minute))
+	require.NoError(t, err)
+	byName := map[string]string{}
+	for _, alert := range got {
+		byName[string(alert["alertname"])] = string(alert["group_id"])
+	}
+	require.Equal(t, "recovered-1", byName["NodeDown"], "adoption must preserve the recovered identity")
+	require.NotEqual(t, "recovered-1", byName["StorageError"], "new alerts must be grouped under the new rules")
+	require.Same(t, snapshotB, p.groupsCollection.rules, "adoption must happen on the second cycle")
+}
+
 func TestProcessorReloadKeepsAssignmentsWhenExclusionRemoved(t *testing.T) {
 	twoRuleSnapshot := func(t *testing.T, excludeC bool) *RulesSnapshot {
 		t.Helper()
